@@ -76,6 +76,7 @@ void podcast_view_refresh_podcasts(PodcastView *view);
 void podcast_view_play_episode(PodcastView *view, gint episode_id);
 void podcast_view_refresh_episodes(PodcastView *view, gint podcast_id);
 void podcast_view_download_episode(PodcastView *view, gint episode_id);
+void podcast_view_filter(PodcastView *view, const gchar *search_text);
 
 /* Episode-specific features */
 void podcast_view_update_episode_features(PodcastView *view, GList *chapters, const gchar *transcript_url, const gchar *transcript_type, GList *funding);

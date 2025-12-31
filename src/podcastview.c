@@ -806,3 +806,106 @@ void podcast_view_update_episode_features(PodcastView *view, GList *chapters, co
         gtk_widget_set_sensitive(view->support_button, FALSE);
     }
 }
+
+void podcast_view_filter(PodcastView *view, const gchar *search_text) {
+    if (!view) return;
+    
+    /* If no search text, show all podcasts and episodes */
+    if (!search_text || strlen(search_text) == 0) {
+        podcast_view_refresh_podcasts(view);
+        if (view->selected_podcast_id > 0) {
+            podcast_view_refresh_episodes(view, view->selected_podcast_id);
+        }
+        return;
+    }
+    
+    /* Filter podcasts by title or author */
+    GList *all_podcasts = database_get_podcasts(view->database);
+    gtk_list_store_clear(view->podcast_store);
+    
+    gchar *search_lower = g_utf8_strdown(search_text, -1);
+    
+    for (GList *l = all_podcasts; l != NULL; l = l->next) {
+        Podcast *podcast = (Podcast *)l->data;
+        gchar *title_lower = g_utf8_strdown(podcast->title ? podcast->title : "", -1);
+        gchar *author_lower = g_utf8_strdown(podcast->author ? podcast->author : "", -1);
+        
+        gboolean match = (strstr(title_lower, search_lower) != NULL) || 
+                        (strstr(author_lower, search_lower) != NULL);
+        
+        g_free(title_lower);
+        g_free(author_lower);
+        
+        if (match) {
+            GtkTreeIter iter;
+            gtk_list_store_append(view->podcast_store, &iter);
+            gtk_list_store_set(view->podcast_store, &iter,
+                             PODCAST_COL_ID, podcast->id,
+                             PODCAST_COL_TITLE, podcast->title,
+                             PODCAST_COL_AUTHOR, podcast->author,
+                             -1);
+        }
+    }
+    
+    g_free(search_lower);
+    g_list_free_full(all_podcasts, (GDestroyNotify)podcast_free);
+    
+    /* Also filter episodes if a podcast is selected */
+    if (view->selected_podcast_id > 0) {
+        GList *all_episodes = database_get_podcast_episodes(view->database, view->selected_podcast_id);
+        gtk_list_store_clear(view->episode_store);
+        
+        search_lower = g_utf8_strdown(search_text, -1);
+        
+        for (GList *l = all_episodes; l != NULL; l = l->next) {
+            PodcastEpisode *episode = (PodcastEpisode *)l->data;
+            gchar *title_lower = g_utf8_strdown(episode->title ? episode->title : "", -1);
+            gchar *desc_lower = g_utf8_strdown(episode->description ? episode->description : "", -1);
+            
+            gboolean match = (strstr(title_lower, search_lower) != NULL) || 
+                            (strstr(desc_lower, search_lower) != NULL);
+            
+            g_free(title_lower);
+            g_free(desc_lower);
+            
+            if (match) {
+                GtkTreeIter iter;
+                gtk_list_store_append(view->episode_store, &iter);
+                
+                gchar date_str[64] = "Unknown";
+                if (episode->published_date > 0) {
+                    GDateTime *dt = g_date_time_new_from_unix_local(episode->published_date);
+                    if (dt) {
+                        gchar *fmt = g_date_time_format(dt, "%Y-%m-%d");
+                        g_snprintf(date_str, sizeof(date_str), "%s", fmt);
+                        g_free(fmt);
+                        g_date_time_unref(dt);
+                    }
+                }
+                
+                gchar duration_str[32] = "";
+                if (episode->duration > 0) {
+                    gint hours = episode->duration / 3600;
+                    gint minutes = (episode->duration % 3600) / 60;
+                    gint seconds = episode->duration % 60;
+                    if (hours > 0) {
+                        g_snprintf(duration_str, sizeof(duration_str), "%02d:%02d:%02d", hours, minutes, seconds);
+                    } else {
+                        g_snprintf(duration_str, sizeof(duration_str), "%02d:%02d", minutes, seconds);
+                    }
+                }
+                
+                gtk_list_store_set(view->episode_store, &iter,
+                                 EPISODE_COL_ID, episode->id,
+                                 EPISODE_COL_TITLE, episode->title,
+                                 EPISODE_COL_DATE, date_str,
+                                 EPISODE_COL_DURATION, duration_str,
+                                 EPISODE_COL_DOWNLOADED, episode->local_file_path != NULL,
+                                 -1);
+            }
+        }
+        
+        g_free(search_lower);
+        g_list_free_full(all_episodes, (GDestroyNotify)podcast_episode_free);
+    }
+}

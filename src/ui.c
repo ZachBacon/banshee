@@ -30,6 +30,7 @@ static void ui_internal_update_track_list(MediaPlayerUI *ui);
 static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks);
 static void ui_show_radio_stations(MediaPlayerUI *ui);
 static void on_import_media_clicked(GtkMenuItem *item, gpointer user_data);
+static void on_search_changed(GtkSearchEntry *entry, gpointer user_data);
 
 static void on_seek_changed(GtkRange *range, gpointer user_data) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
@@ -638,6 +639,7 @@ static GtkWidget* create_control_box(MediaPlayerUI *ui) {
     
     ui->search_entry = gtk_search_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search library...");
+    g_signal_connect(ui->search_entry, "search-changed", G_CALLBACK(on_search_changed), ui);
     gtk_box_pack_start(GTK_BOX(search_row), ui->search_entry, TRUE, TRUE, 0);
     
     gtk_box_pack_start(GTK_BOX(vbox), search_row, FALSE, FALSE, 0);
@@ -675,6 +677,59 @@ static GtkWidget* create_control_box(MediaPlayerUI *ui) {
     return vbox;
 }
 
+static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
+    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
+    const gchar *search_text = gtk_entry_get_text(GTK_ENTRY(entry));
+    
+    /* Get the active source to determine which view is shown */
+    Source *active = source_manager_get_active(ui->source_manager);
+    if (!active) return;
+    
+    /* Get the content stack */
+    GtkStack *content_stack = GTK_STACK(g_object_get_data(G_OBJECT(ui->window), "content_stack"));
+    const gchar *visible_child = gtk_stack_get_visible_child_name(content_stack);
+    
+    if (g_strcmp0(visible_child, "podcast") == 0) {
+        /* Search in podcast view */
+        podcast_view_filter(ui->podcast_view, search_text);
+    } else {
+        /* Search in music library track list */
+        if (!search_text || strlen(search_text) == 0) {
+            /* No search - show all tracks based on current filter */
+            if (active->type == SOURCE_TYPE_LIBRARY) {
+                /* Check if an artist is selected */
+                GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->artist_browser));
+                gchar *artist = browser_model_get_selection(ui->artist_model, selection);
+                
+                if (artist && g_strcmp0(artist, "All Artists") != 0) {
+                    GList *tracks = database_get_tracks_by_artist(ui->database, artist);
+                    ui_update_track_list_with_tracks(ui, tracks);
+                    g_list_free_full(tracks, (GDestroyNotify)database_free_track);
+                } else {
+                    ui_internal_update_track_list(ui);
+                }
+                g_free(artist);
+            } else if (active->type == SOURCE_TYPE_PLAYLIST) {
+                GList *tracks = database_get_playlist_tracks(ui->database, active->playlist_id);
+                ui_update_track_list_with_tracks(ui, tracks);
+                g_list_free_full(tracks, (GDestroyNotify)database_free_track);
+            } else if (active->type == SOURCE_TYPE_SMART_PLAYLIST) {
+                SmartPlaylist *sp = (SmartPlaylist *)active->user_data;
+                if (sp) {
+                    GList *tracks = smartplaylist_get_tracks(sp, ui->database);
+                    ui_update_track_list_with_tracks(ui, tracks);
+                    g_list_free_full(tracks, (GDestroyNotify)database_free_track);
+                }
+            }
+        } else {
+            /* Search tracks */
+            GList *tracks = database_search_tracks(ui->database, search_text);
+            ui_update_track_list_with_tracks(ui, tracks);
+            g_list_free_full(tracks, (GDestroyNotify)database_free_track);
+        }
+    }
+}
+
 static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
     GtkTreeIter iter;
@@ -684,6 +739,9 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
         
         if (source) {
             source_manager_set_active(ui->source_manager, source);
+            
+            /* Clear search entry when switching sources */
+            gtk_entry_set_text(GTK_ENTRY(ui->search_entry), "");
             
             /* Get the content stack */
             GtkStack *content_stack = GTK_STACK(g_object_get_data(G_OBJECT(ui->window), "content_stack"));
@@ -699,6 +757,9 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                 case SOURCE_TYPE_LIBRARY:
                     /* Switch to music view */
                     gtk_stack_set_visible_child_name(content_stack, "music");
+                    
+                    /* Update search placeholder */
+                    gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search library...");
                     
                     /* Hide episode buttons for music library */
                     gtk_widget_hide(ui->chapters_button);
@@ -727,6 +788,9 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     /* Switch to music view */
                     gtk_stack_set_visible_child_name(content_stack, "music");
                     
+                    /* Update search placeholder */
+                    gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search playlist...");
+                    
                     /* Hide episode buttons for playlist */
                     gtk_widget_hide(ui->chapters_button);
                     gtk_widget_hide(ui->transcript_button);
@@ -746,6 +810,9 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                 case SOURCE_TYPE_SMART_PLAYLIST: {
                     /* Switch to music view */
                     gtk_stack_set_visible_child_name(content_stack, "music");
+                    
+                    /* Update search placeholder */
+                    gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search smart playlist...");
                     
                     /* Hide episode buttons for smart playlist */
                     gtk_widget_hide(ui->chapters_button);
@@ -769,6 +836,9 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     /* Switch to music view and show radio stations */
                     gtk_stack_set_visible_child_name(content_stack, "music");
                     
+                    /* Update search placeholder */
+                    gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search stations...");
+                    
                     /* Hide episode buttons for radio */
                     gtk_widget_hide(ui->chapters_button);
                     gtk_widget_hide(ui->transcript_button);
@@ -784,6 +854,10 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                 case SOURCE_TYPE_PODCAST:
                     /* Switch to podcast view */
                     gtk_stack_set_visible_child_name(content_stack, "podcast");
+                    
+                    /* Update search placeholder */
+                    gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search podcasts...");
+                    
                     podcast_view_refresh_podcasts(ui->podcast_view);
                     
                     /* Hide global episode buttons since they're now in podcast toolbar */
