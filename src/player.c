@@ -81,10 +81,25 @@ MediaPlayer* player_new(void) {
         return NULL;
     }
     
-    /* Enable buffering for network streams */
+#ifdef _WIN32
+    /* On Windows, use directsoundsink or wasapisink for better performance */
+    GstElement *audio_sink = gst_element_factory_make("wasapisink", "audio_sink");
+    if (!audio_sink) {
+        audio_sink = gst_element_factory_make("directsoundsink", "audio_sink");
+    }
+    if (audio_sink) {
+        /* Balanced settings for smooth playback without jitter */
+        g_object_set(audio_sink, 
+                     "buffer-time", G_GINT64_CONSTANT(200000),    /* 200ms */
+                     NULL);
+        g_object_set(player->playbin, "audio-sink", audio_sink, NULL);
+    }
+#endif
+    
+    /* Enable buffering only for network streams (will be set per-URI) */
     g_object_set(player->playbin,
-                 "buffer-size", 2 * 1024 * 1024,    /* 2MB buffer */
-                 "buffer-duration", 5 * GST_SECOND,  /* 5 seconds */
+                 "buffer-size", -1,    /* Let GStreamer decide */
+                 "buffer-duration", -1,  /* Let GStreamer decide */
                  NULL);
     
     player->pipeline = player->playbin;
@@ -133,20 +148,38 @@ gboolean player_set_uri(MediaPlayer *player, const gchar *uri) {
         g_str_has_prefix(uri, "https://")) {
         full_uri = g_strdup(uri);
     } else {
-        full_uri = g_strdup_printf("file://%s", uri);
+        /* Convert file path to proper URI format (handles Windows paths correctly) */
+        full_uri = g_filename_to_uri(uri, NULL, NULL);
+        if (!full_uri) {
+            /* Fallback if conversion fails */
+            full_uri = g_strdup_printf("file://%s", uri);
+        }
     }
     
     g_object_set(player->playbin, "uri", full_uri, NULL);
-    g_free(full_uri);
     
-    /* Enable progressive downloading for HTTP streams */
+    /* Configure buffering based on URI type */
     if (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://")) {
+        /* Enable buffering and progressive downloading for HTTP streams */
+        g_object_set(player->playbin,
+                     "buffer-size", 2 * 1024 * 1024,    /* 2MB buffer */
+                     "buffer-duration", 5 * GST_SECOND,  /* 5 seconds */
+                     NULL);
+        
         gint flags;
         g_object_get(player->playbin, "flags", &flags, NULL);
         flags |= 0x00000080;  /* GST_PLAY_FLAG_DOWNLOAD */
         g_object_set(player->playbin, "flags", flags, NULL);
         g_print("Enabled progressive download for network stream\n");
+    } else {
+        /* For local files, disable buffering for immediate playback */
+        g_object_set(player->playbin,
+                     "buffer-size", -1,
+                     "buffer-duration", -1,
+                     NULL);
     }
+    
+    g_free(full_uri);
     
     /* Set to ready state to get duration */
     gst_element_set_state(player->playbin, GST_STATE_PAUSED);

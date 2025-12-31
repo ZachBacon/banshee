@@ -8,6 +8,54 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#ifdef _WIN32
+/* Minimal strptime implementation for Windows */
+static char *strptime(const char *buf, const char *fmt, struct tm *tm) {
+    /* Simple implementation for the specific formats used in this file */
+    if (strcmp(fmt, "%a, %d %b %Y %H:%M:%S") == 0) {
+        /* RFC 822: "Mon, 30 Dec 2025 10:00:00 GMT" */
+        char day_name[4], month_name[4];
+        int n = sscanf(buf, "%3s, %d %3s %d %d:%d:%d",
+                       day_name, &tm->tm_mday, month_name, &tm->tm_year,
+                       &tm->tm_hour, &tm->tm_min, &tm->tm_sec);
+        if (n != 7) return NULL;
+        
+        /* Convert month name to number */
+        const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        for (int i = 0; i < 12; i++) {
+            if (strcmp(month_name, months[i]) == 0) {
+                tm->tm_mon = i;
+                break;
+            }
+        }
+        tm->tm_year -= 1900;  /* tm_year is years since 1900 */
+        tm->tm_isdst = -1;
+        return (char *)buf + strlen(buf);
+    } else if (strcmp(fmt, "%d %b %Y %H:%M:%S") == 0) {
+        /* Alternative format: "30 Dec 2025 10:00:00" */
+        char month_name[4];
+        int n = sscanf(buf, "%d %3s %d %d:%d:%d",
+                       &tm->tm_mday, month_name, &tm->tm_year,
+                       &tm->tm_hour, &tm->tm_min, &tm->tm_sec);
+        if (n != 6) return NULL;
+        
+        const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        for (int i = 0; i < 12; i++) {
+            if (strcmp(month_name, months[i]) == 0) {
+                tm->tm_mon = i;
+                break;
+            }
+        }
+        tm->tm_year -= 1900;
+        tm->tm_isdst = -1;
+        return (char *)buf + strlen(buf);
+    }
+    return NULL;
+}
+#endif
+
 /* Memory buffer for CURL */
 typedef struct {
     gchar *data;
