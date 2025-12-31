@@ -1,0 +1,140 @@
+#include <gtk/gtk.h>
+#include <gst/gst.h>
+#include <glib.h>
+#include "player.h"
+#include "database.h"
+#include "ui.h"
+#include "playlist.h"
+
+#define APP_NAME "Banshee Media Player"
+#define VERSION "1.0.0"
+
+typedef struct {
+    MediaPlayer *player;
+    Database *database;
+    MediaPlayerUI *ui;
+    PlaylistManager *playlist_manager;
+    guint update_timer_id;
+} Application;
+
+static gboolean update_position(gpointer user_data) {
+    Application *app = (Application *)user_data;
+    
+    if (player_get_state(app->player) == PLAYER_STATE_PLAYING) {
+        gint64 position = player_get_position(app->player);
+        gint64 duration = player_get_duration(app->player);
+        ui_update_position(app->ui, position, duration);
+    }
+    
+    return TRUE; /* Continue calling */
+}
+
+static void cleanup_application(Application *app) {
+    if (app->update_timer_id > 0) {
+        g_source_remove(app->update_timer_id);
+    }
+    
+    if (app->ui) {
+        ui_free(app->ui);
+    }
+    
+    if (app->playlist_manager) {
+        playlist_manager_free(app->playlist_manager);
+    }
+    
+    if (app->player) {
+        player_free(app->player);
+    }
+    
+    if (app->database) {
+        database_free(app->database);
+    }
+    
+    g_free(app);
+}
+
+static Application* init_application(void) {
+    Application *app = g_new0(Application, 1);
+    
+    /* Initialize GStreamer */
+    gst_init(NULL, NULL);
+    
+    /* Create player */
+    app->player = player_new();
+    if (!app->player) {
+        g_printerr("Failed to create media player\n");
+        g_free(app);
+        return NULL;
+    }
+    
+    /* Initialize database */
+    gchar *db_path = g_build_filename(g_get_user_data_dir(), "banshee", "library.db", NULL);
+    gchar *db_dir = g_path_get_dirname(db_path);
+    g_mkdir_with_parents(db_dir, 0755);
+    g_free(db_dir);
+    
+    app->database = database_new(db_path);
+    g_free(db_path);
+    
+    if (!app->database) {
+        g_printerr("Failed to open database\n");
+        player_free(app->player);
+        g_free(app);
+        return NULL;
+    }
+    
+    if (!database_init_tables(app->database)) {
+        g_printerr("Failed to initialize database tables\n");
+        database_free(app->database);
+        player_free(app->player);
+        g_free(app);
+        return NULL;
+    }
+    
+    /* Create playlist manager */
+    app->playlist_manager = playlist_manager_new();
+    
+    /* Create UI */
+    app->ui = ui_new(app->player, app->database);
+    if (!app->ui) {
+        g_printerr("Failed to create UI\n");
+        playlist_manager_free(app->playlist_manager);
+        database_free(app->database);
+        player_free(app->player);
+        g_free(app);
+        return NULL;
+    }
+    
+    /* Load all tracks and update UI */
+    GList *tracks = database_get_all_tracks(app->database);
+    ui_update_track_list(app->ui, tracks);
+    
+    /* Set up position update timer (updates every 500ms) */
+    app->update_timer_id = g_timeout_add(500, update_position, app);
+    
+    return app;
+}
+
+int main(int argc, char *argv[]) {
+    /* Initialize GTK */
+    gtk_init(&argc, &argv);
+    
+    /* Create and initialize application */
+    Application *app = init_application();
+    if (!app) {
+        return 1;
+    }
+    
+    g_print("%s v%s\n", APP_NAME, VERSION);
+    g_print("Database location: %s/.local/share/banshee/library.db\n", g_get_home_dir());
+    
+    /* UI is shown in ui_new() - no need to call ui_show */
+    
+    /* Run main loop */
+    gtk_main();
+    
+    /* Cleanup */
+    cleanup_application(app);
+    
+    return 0;
+}

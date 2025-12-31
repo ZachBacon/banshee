@@ -1,0 +1,655 @@
+#include "podcastview.h"
+#include "transcriptview.h"
+#include <string.h>
+
+static void on_chapters_button_clicked(GtkButton *button, gpointer user_data);
+static void on_transcript_button_clicked(GtkButton *button, gpointer user_data);
+static void on_support_button_clicked(GtkButton *button, gpointer user_data);
+static void on_chapter_seek(gpointer user_data, gdouble time);
+static void on_funding_url_clicked(GtkWidget *button, gpointer user_data);
+
+enum {
+    PODCAST_COL_ID,
+    PODCAST_COL_TITLE,
+    PODCAST_COL_AUTHOR,
+    PODCAST_COL_COUNT
+};
+
+enum {
+    EPISODE_COL_ID,
+    EPISODE_COL_TITLE,
+    EPISODE_COL_DATE,
+    EPISODE_COL_DURATION,
+    EPISODE_COL_DOWNLOADED,
+    EPISODE_COL_COUNT
+};
+
+static void on_podcast_selection_changed(GtkTreeSelection *selection, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    
+    GtkTreeModel *model;
+    GtkTreeIter iter;
+    
+    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+        gint podcast_id;
+        gtk_tree_model_get(model, &iter, PODCAST_COL_ID, &podcast_id, -1);
+        
+        view->selected_podcast_id = podcast_id;
+        podcast_view_refresh_episodes(view, podcast_id);
+    }
+}
+
+static void on_add_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    podcast_view_add_subscription(view);
+}
+
+static void on_refresh_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    podcast_view_refresh_podcasts(view);
+}
+
+static void on_download_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    
+    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->episode_listview));
+    GtkTreeModel *model;
+    GtkTreeIter iter;
+    
+    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+        gint episode_id;
+        gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
+        podcast_view_download_episode(view, episode_id);
+    }
+}
+
+static void on_episode_row_activated(GtkTreeView *treeview, GtkTreePath *path, 
+                                     GtkTreeViewColumn *column, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)column;
+    
+    GtkTreeModel *model = gtk_tree_view_get_model(treeview);
+    GtkTreeIter iter;
+    
+    if (gtk_tree_model_get_iter(model, &iter, path)) {
+        gint episode_id;
+        gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
+        podcast_view_play_episode(view, episode_id);
+    }
+}
+
+static void on_chapter_seek(gpointer user_data, gdouble time) {
+    PodcastView *view = (PodcastView *)user_data;
+    
+    /* If we have a seek callback from the main player, use it */
+    /* For now, just print the seek request */
+    g_print("Seeking to chapter at %.1f seconds\n", time);
+}
+
+static void on_chapters_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    
+    if (!view->current_chapters) {
+        return;
+    }
+    
+    /* Create popover if it doesn't exist */
+    if (!view->chapter_popover) {
+        view->chapter_view = chapter_view_new();
+        chapter_view_set_seek_callback(view->chapter_view, on_chapter_seek, view);
+        
+        view->chapter_popover = gtk_popover_new(view->chapters_button);
+        gtk_container_add(GTK_CONTAINER(view->chapter_popover), chapter_view_get_widget(view->chapter_view));
+        gtk_widget_set_size_request(chapter_view_get_widget(view->chapter_view), 300, 400);
+    }
+    
+    /* Update chapters and show popover */
+    chapter_view_set_chapters(view->chapter_view, view->current_chapters);
+    gtk_widget_show_all(view->chapter_popover);
+    gtk_popover_popup(GTK_POPOVER(view->chapter_popover));
+}
+
+static void on_transcript_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    
+    if (!view->current_transcript_url) {
+        return;
+    }
+    
+    /* Create popover if it doesn't exist */
+    if (!view->transcript_popover) {
+        TranscriptView *transcript_view = transcript_view_new();
+        
+        view->transcript_popover = gtk_popover_new(view->transcript_button);
+        gtk_container_add(GTK_CONTAINER(view->transcript_popover), transcript_view_get_widget(transcript_view));
+        gtk_widget_set_size_request(transcript_view_get_widget(transcript_view), 500, 600);
+        
+        /* Store transcript view in popover data for later access */
+        g_object_set_data(G_OBJECT(view->transcript_popover), "transcript_view", transcript_view);
+    }
+    
+    /* Load transcript */
+    TranscriptView *transcript_view = (TranscriptView *)g_object_get_data(G_OBJECT(view->transcript_popover), "transcript_view");
+    transcript_view_load_from_url(transcript_view, view->current_transcript_url, view->current_transcript_type);
+    
+    gtk_widget_show_all(view->transcript_popover);
+    gtk_popover_popup(GTK_POPOVER(view->transcript_popover));
+}
+
+static void on_funding_url_clicked(GtkWidget *button, gpointer user_data) {
+    (void)user_data;
+    const gchar *url = (const gchar *)g_object_get_data(G_OBJECT(button), "funding_url");
+    if (url) {
+        gchar *command = g_strdup_printf("xdg-open '%s'", url);
+        g_spawn_command_line_async(command, NULL);
+        g_free(command);
+        g_print("Opening funding URL: %s\n", url);
+    }
+}
+
+static void on_support_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    
+    if (!view->current_funding) {
+        return;
+    }
+    
+    /* Create popover if it doesn't exist */
+    if (!view->funding_popover) {
+        GtkWidget *funding_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+        gtk_widget_set_margin_start(funding_box, 10);
+        gtk_widget_set_margin_end(funding_box, 10);
+        gtk_widget_set_margin_top(funding_box, 10);
+        gtk_widget_set_margin_bottom(funding_box, 10);
+        
+        GtkWidget *title_label = gtk_label_new("Support this Podcast");
+        gtk_widget_set_halign(title_label, GTK_ALIGN_START);
+        PangoAttrList *attrs = pango_attr_list_new();
+        pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
+        gtk_label_set_attributes(GTK_LABEL(title_label), attrs);
+        pango_attr_list_unref(attrs);
+        gtk_box_pack_start(GTK_BOX(funding_box), title_label, FALSE, FALSE, 0);
+        
+        /* Add funding links */
+        for (GList *l = view->current_funding; l != NULL; l = l->next) {
+            PodcastFunding *funding = (PodcastFunding *)l->data;
+            
+            GtkWidget *funding_button = gtk_button_new();
+            gtk_button_set_relief(GTK_BUTTON(funding_button), GTK_RELIEF_NONE);
+            
+            GtkWidget *funding_label_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+            
+            /* Add icon if we can determine the platform */
+            const gchar *icon_name = "web-browser-symbolic";  /* Default icon */
+            if (g_str_has_prefix(funding->url, "https://www.patreon.com")) {
+                icon_name = "applications-internet-symbolic";
+            } else if (g_str_has_prefix(funding->url, "https://ko-fi.com")) {
+                icon_name = "face-smile-symbolic";
+            }
+            
+            GtkWidget *icon = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_BUTTON);
+            gtk_box_pack_start(GTK_BOX(funding_label_box), icon, FALSE, FALSE, 0);
+            
+            GtkWidget *label = gtk_label_new(funding->message ? funding->message : funding->url);
+            gtk_widget_set_halign(label, GTK_ALIGN_START);
+            gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+            gtk_label_set_max_width_chars(GTK_LABEL(label), 40);
+            gtk_box_pack_start(GTK_BOX(funding_label_box), label, TRUE, TRUE, 0);
+            
+            gtk_container_add(GTK_CONTAINER(funding_button), funding_label_box);
+            
+            /* Store URL in button data */
+            g_object_set_data_full(G_OBJECT(funding_button), "funding_url", 
+                                   g_strdup(funding->url), g_free);
+            
+            g_signal_connect(funding_button, "clicked", G_CALLBACK(on_funding_url_clicked), NULL);
+            
+            gtk_box_pack_start(GTK_BOX(funding_box), funding_button, FALSE, FALSE, 0);
+        }
+        
+        view->funding_popover = gtk_popover_new(view->support_button);
+        gtk_container_add(GTK_CONTAINER(view->funding_popover), funding_box);
+        gtk_widget_set_size_request(funding_box, 350, -1);
+    }
+    
+    gtk_widget_show_all(view->funding_popover);
+    gtk_popover_popup(GTK_POPOVER(view->funding_popover));
+}
+
+PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
+    PodcastView *view = g_new0(PodcastView, 1);
+    view->podcast_manager = manager;
+    view->database = database;
+    view->selected_podcast_id = -1;
+    
+    /* Initialize episode-specific data */
+    view->chapter_view = NULL;
+    view->chapter_popover = NULL;
+    view->transcript_popover = NULL;
+    view->funding_popover = NULL;
+    view->current_chapters = NULL;
+    view->current_transcript_url = NULL;
+    view->current_transcript_type = NULL;
+    view->current_funding = NULL;
+    
+    /* Main container */
+    view->container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    
+    /* Toolbar */
+    GtkWidget *toolbar = gtk_toolbar_new();
+    gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH_HORIZ);
+    gtk_toolbar_set_icon_size(GTK_TOOLBAR(toolbar), GTK_ICON_SIZE_SMALL_TOOLBAR);
+    
+    view->add_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Subscribe"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->add_button), "list-add");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->add_button), -1);
+    g_signal_connect(view->add_button, "clicked", G_CALLBACK(on_add_button_clicked), view);
+    
+    view->remove_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Unsubscribe"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->remove_button), "list-remove");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->remove_button), -1);
+    
+    view->refresh_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Refresh"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->refresh_button), "view-refresh");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->refresh_button), -1);
+    g_signal_connect(view->refresh_button, "clicked", G_CALLBACK(on_refresh_button_clicked), view);
+    
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
+    
+    view->download_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Download"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->download_button), "document-save");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->download_button), -1);
+    g_signal_connect(view->download_button, "clicked", G_CALLBACK(on_download_button_clicked), view);
+    
+    /* Add separator before episode-specific buttons */
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
+    
+    /* Episode-specific buttons */
+    view->chapters_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Chapters"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->chapters_button), "view-list-symbolic");
+    gtk_widget_set_sensitive(view->chapters_button, FALSE);  /* Disabled until chapters available */
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->chapters_button), -1);
+    g_signal_connect(view->chapters_button, "clicked", G_CALLBACK(on_chapters_button_clicked), view);
+    
+    view->transcript_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Transcript"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->transcript_button), "text-x-generic-symbolic");
+    gtk_widget_set_sensitive(view->transcript_button, FALSE);  /* Disabled until transcript available */
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->transcript_button), -1);
+    g_signal_connect(view->transcript_button, "clicked", G_CALLBACK(on_transcript_button_clicked), view);
+    
+    view->support_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Support"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->support_button), "emblem-favorite-symbolic");
+    gtk_widget_set_sensitive(view->support_button, FALSE);  /* Disabled until funding available */
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->support_button), -1);
+    g_signal_connect(view->support_button, "clicked", G_CALLBACK(on_support_button_clicked), view);
+    
+    gtk_box_pack_start(GTK_BOX(view->container), toolbar, FALSE, FALSE, 0);
+    
+    /* Paned container for podcast list and episode list */
+    view->paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_paned_set_position(GTK_PANED(view->paned), 250);
+    
+    /* Podcast list */
+    view->podcast_store = gtk_list_store_new(PODCAST_COL_COUNT,
+                                             G_TYPE_INT,    /* ID */
+                                             G_TYPE_STRING, /* Title */
+                                             G_TYPE_STRING  /* Author */
+                                            );
+    
+    view->podcast_listview = gtk_tree_view_new_with_model(GTK_TREE_MODEL(view->podcast_store));
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view->podcast_listview), TRUE);
+    
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes("Podcast", renderer, "text", PODCAST_COL_TITLE, NULL);
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(view->podcast_listview), column);
+    
+    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->podcast_listview));
+    gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
+    g_signal_connect(selection, "changed", G_CALLBACK(on_podcast_selection_changed), view);
+    
+    GtkWidget *podcast_scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(podcast_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(podcast_scroll), view->podcast_listview);
+    gtk_paned_pack1(GTK_PANED(view->paned), podcast_scroll, FALSE, TRUE);
+    
+    /* Episode list */
+    view->episode_store = gtk_list_store_new(EPISODE_COL_COUNT,
+                                             G_TYPE_INT,     /* ID */
+                                             G_TYPE_STRING,  /* Title */
+                                             G_TYPE_STRING,  /* Date */
+                                             G_TYPE_STRING,  /* Duration */
+                                             G_TYPE_BOOLEAN  /* Downloaded */
+                                            );
+    
+    view->episode_listview = gtk_tree_view_new_with_model(GTK_TREE_MODEL(view->episode_store));
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view->episode_listview), TRUE);
+    
+    renderer = gtk_cell_renderer_text_new();
+    column = gtk_tree_view_column_new_with_attributes("Episode", renderer, "text", EPISODE_COL_TITLE, NULL);
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    gtk_tree_view_column_set_expand(column, TRUE);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(view->episode_listview), column);
+    
+    renderer = gtk_cell_renderer_text_new();
+    column = gtk_tree_view_column_new_with_attributes("Date", renderer, "text", EPISODE_COL_DATE, NULL);
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(view->episode_listview), column);
+    
+    renderer = gtk_cell_renderer_text_new();
+    column = gtk_tree_view_column_new_with_attributes("Duration", renderer, "text", EPISODE_COL_DURATION, NULL);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(view->episode_listview), column);
+    
+    renderer = gtk_cell_renderer_toggle_new();
+    column = gtk_tree_view_column_new_with_attributes("Downloaded", renderer, "active", EPISODE_COL_DOWNLOADED, NULL);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(view->episode_listview), column);
+    
+    /* Connect row-activated signal for double-click playback */
+    g_signal_connect(view->episode_listview, "row-activated", G_CALLBACK(on_episode_row_activated), view);
+    
+    GtkWidget *episode_scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(episode_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(episode_scroll), view->episode_listview);
+    gtk_paned_pack2(GTK_PANED(view->paned), episode_scroll, TRUE, TRUE);
+    
+    gtk_box_pack_start(GTK_BOX(view->container), view->paned, TRUE, TRUE, 0);
+    
+    return view;
+}
+
+void podcast_view_free(PodcastView *view) {
+    if (!view) return;
+    
+    /* Clean up episode-specific data */
+    if (view->current_chapters) {
+        g_list_free_full(view->current_chapters, (GDestroyNotify)podcast_chapter_free);
+    }
+    g_free(view->current_transcript_url);
+    g_free(view->current_transcript_type);
+    if (view->current_funding) {
+        g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+    }
+    
+    g_free(view);
+}
+
+void podcast_view_set_play_callback(PodcastView *view, EpisodePlayCallback callback, gpointer user_data) {
+    if (!view) return;
+    view->play_callback = callback;
+    view->play_callback_data = user_data;
+}
+
+GtkWidget* podcast_view_get_widget(PodcastView *view) {
+    return view ? view->container : NULL;
+}
+
+void podcast_view_add_subscription(PodcastView *view) {
+    if (!view) return;
+    
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Subscribe to Podcast",
+        NULL,
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Subscribe", GTK_RESPONSE_ACCEPT,
+        NULL
+    );
+    
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 12);
+    
+    GtkWidget *label = gtk_label_new("Feed URL:");
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
+    
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "https://example.com/feed.xml");
+    gtk_entry_set_width_chars(GTK_ENTRY(entry), 50);
+    gtk_grid_attach(GTK_GRID(grid), entry, 1, 0, 1, 1);
+    
+    gtk_container_add(GTK_CONTAINER(content), grid);
+    gtk_widget_show_all(dialog);
+    
+    gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+    
+    if (response == GTK_RESPONSE_ACCEPT) {
+        const gchar *feed_url = gtk_entry_get_text(GTK_ENTRY(entry));
+        
+        if (feed_url && strlen(feed_url) > 0) {
+            /* Show progress dialog */
+            GtkWidget *progress_dialog = gtk_message_dialog_new(
+                NULL,
+                GTK_DIALOG_MODAL,
+                GTK_MESSAGE_INFO,
+                GTK_BUTTONS_NONE,
+                "Subscribing to podcast..."
+            );
+            gtk_widget_show_all(progress_dialog);
+            
+            while (gtk_events_pending()) {
+                gtk_main_iteration();
+            }
+            
+            /* Subscribe to podcast */
+            gboolean success = podcast_manager_subscribe(view->podcast_manager, feed_url);
+            
+            gtk_widget_destroy(progress_dialog);
+            
+            if (success) {
+                /* Refresh podcast list */
+                podcast_view_refresh_podcasts(view);
+                
+                GtkWidget *msg = gtk_message_dialog_new(
+                    NULL,
+                    GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_INFO,
+                    GTK_BUTTONS_OK,
+                    "Successfully subscribed to podcast!"
+                );
+                gtk_dialog_run(GTK_DIALOG(msg));
+                gtk_widget_destroy(msg);
+            } else {
+                GtkWidget *msg = gtk_message_dialog_new(
+                    NULL,
+                    GTK_DIALOG_MODAL,
+                    GTK_MESSAGE_ERROR,
+                    GTK_BUTTONS_OK,
+                    "Failed to subscribe to podcast. Please check the feed URL."
+                );
+                gtk_dialog_run(GTK_DIALOG(msg));
+                gtk_widget_destroy(msg);
+            }
+        }
+    }
+    
+    gtk_widget_destroy(dialog);
+}
+
+void podcast_view_refresh_podcasts(PodcastView *view) {
+    if (!view) return;
+    
+    gtk_list_store_clear(view->podcast_store);
+    
+    GList *podcasts = podcast_manager_get_podcasts(view->podcast_manager);
+    
+    for (GList *l = podcasts; l != NULL; l = l->next) {
+        Podcast *podcast = (Podcast *)l->data;
+        
+        GtkTreeIter iter;
+        gtk_list_store_append(view->podcast_store, &iter);
+        gtk_list_store_set(view->podcast_store, &iter,
+                          PODCAST_COL_ID, podcast->id,
+                          PODCAST_COL_TITLE, podcast->title ? podcast->title : "Unknown",
+                          PODCAST_COL_AUTHOR, podcast->author ? podcast->author : "",
+                          -1);
+    }
+}
+
+void podcast_view_refresh_episodes(PodcastView *view, gint podcast_id) {
+    if (!view) return;
+    
+    gtk_list_store_clear(view->episode_store);
+    
+    GList *episodes = podcast_manager_get_episodes(view->podcast_manager, podcast_id);
+    
+    for (GList *l = episodes; l != NULL; l = l->next) {
+        PodcastEpisode *episode = (PodcastEpisode *)l->data;
+        
+        /* Format date */
+        gchar date_str[64] = "";
+        if (episode->published_date > 0) {
+            GDateTime *dt = g_date_time_new_from_unix_local(episode->published_date);
+            if (dt) {
+                gchar *formatted = g_date_time_format(dt, "%Y-%m-%d");
+                g_strlcpy(date_str, formatted, sizeof(date_str));
+                g_free(formatted);
+                g_date_time_unref(dt);
+            }
+        }
+        
+        /* Format duration */
+        gchar duration_str[32] = "";
+        if (episode->duration > 0) {
+            gint hours = episode->duration / 3600;
+            gint minutes = (episode->duration % 3600) / 60;
+            gint seconds = episode->duration % 60;
+            
+            if (hours > 0) {
+                g_snprintf(duration_str, sizeof(duration_str), "%d:%02d:%02d", hours, minutes, seconds);
+            } else {
+                g_snprintf(duration_str, sizeof(duration_str), "%d:%02d", minutes, seconds);
+            }
+        }
+        
+        GtkTreeIter iter;
+        gtk_list_store_append(view->episode_store, &iter);
+        gtk_list_store_set(view->episode_store, &iter,
+                          EPISODE_COL_ID, episode->id,
+                          EPISODE_COL_TITLE, episode->title ? episode->title : "Unknown",
+                          EPISODE_COL_DATE, date_str,
+                          EPISODE_COL_DURATION, duration_str,
+                          EPISODE_COL_DOWNLOADED, episode->downloaded,
+                          -1);
+    }
+}
+
+void podcast_view_play_episode(PodcastView *view, gint episode_id) {
+    if (!view) return;
+    
+    /* Get episode details from database */
+    GList *episodes = database_get_podcast_episodes(view->database, view->selected_podcast_id);
+    
+    for (GList *l = episodes; l != NULL; l = l->next) {
+        PodcastEpisode *episode = (PodcastEpisode *)l->data;
+        if (episode->id == episode_id) {
+            /* Play from local file if downloaded, otherwise stream */
+            const gchar *uri = episode->downloaded && episode->local_file_path ? 
+                              episode->local_file_path : episode->enclosure_url;
+            
+            g_print("Playing episode: %s from %s\n", episode->title, uri);
+            
+            /* Load chapters if available */
+            GList *chapters = NULL;
+            if (episode->chapters_url || episode->enclosure_url) {
+                chapters = podcast_episode_get_chapters(view->podcast_manager, episode_id);
+                if (chapters) {
+                    g_print("Loaded %d chapters for episode\n", g_list_length(chapters));
+                }
+            }
+            
+            /* Call playback callback if set */
+            if (view->play_callback) {
+                view->play_callback(view->play_callback_data, uri, episode->title, chapters, 
+                                  episode->transcript_url, episode->transcript_type, episode->funding);
+            }
+            
+            /* Update episode features in the podcast view toolbar */
+            podcast_view_update_episode_features(view, chapters, episode->transcript_url, 
+                                               episode->transcript_type, episode->funding);
+            
+            /* Free chapters (callback should have copied if needed) */
+            if (chapters) {
+                g_list_free_full(chapters, (GDestroyNotify)podcast_chapter_free);
+            }
+            
+            break;
+        }
+    }
+    
+    g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
+}
+
+void podcast_view_download_episode(PodcastView *view, gint episode_id) {
+    if (!view) return;
+    
+    /* Get episode details */
+    GList *episodes = database_get_podcast_episodes(view->database, view->selected_podcast_id);
+    
+    for (GList *l = episodes; l != NULL; l = l->next) {
+        PodcastEpisode *episode = (PodcastEpisode *)l->data;
+        if (episode->id == episode_id) {
+            if (!episode->downloaded) {
+                g_print("Downloading episode: %s\n", episode->title);
+                podcast_episode_download(view->podcast_manager, episode);
+                
+                /* Refresh the episode list to show download status */
+                podcast_view_refresh_episodes(view, view->selected_podcast_id);
+            } else {
+                g_print("Episode already downloaded: %s\n", episode->local_file_path);
+            }
+            break;
+        }
+    }
+    
+    g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
+}
+void podcast_view_update_episode_features(PodcastView *view, GList *chapters, const gchar *transcript_url, const gchar *transcript_type, GList *funding) {
+    if (!view) return;
+    
+    /* Clean up existing data */
+    if (view->current_chapters) {
+        g_list_free_full(view->current_chapters, (GDestroyNotify)podcast_chapter_free);
+        view->current_chapters = NULL;
+    }
+    g_free(view->current_transcript_url);
+    view->current_transcript_url = NULL;
+    g_free(view->current_transcript_type);
+    view->current_transcript_type = NULL;
+    if (view->current_funding) {
+        g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+        view->current_funding = NULL;
+    }
+    
+    /* Copy new data */
+    if (chapters) {
+        view->current_chapters = g_list_copy_deep(chapters, (GCopyFunc)podcast_chapter_copy, NULL);
+        gtk_widget_set_sensitive(view->chapters_button, TRUE);
+    } else {
+        gtk_widget_set_sensitive(view->chapters_button, FALSE);
+    }
+    
+    if (transcript_url) {
+        view->current_transcript_url = g_strdup(transcript_url);
+        view->current_transcript_type = g_strdup(transcript_type);
+        gtk_widget_set_sensitive(view->transcript_button, TRUE);
+    } else {
+        gtk_widget_set_sensitive(view->transcript_button, FALSE);
+    }
+    
+    if (funding) {
+        view->current_funding = g_list_copy_deep(funding, (GCopyFunc)podcast_funding_copy, NULL);
+        gtk_widget_set_sensitive(view->support_button, TRUE);
+    } else {
+        gtk_widget_set_sensitive(view->support_button, FALSE);
+    }
+}
