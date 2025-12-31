@@ -119,4 +119,7 @@ void ui_on_prev_clicked(GtkWidget *widget, gpointer user_data);
 void ui_on_next_clicked(GtkWidget *widget, gpointer user_data);
 void ui_on_track_selected(GtkTreeSelection *selection, gpointer user_data);
 
+/* Preferences dialog */
+void ui_show_preferences_dialog(MediaPlayerUI *ui);
+
 #endif /* UI_H */

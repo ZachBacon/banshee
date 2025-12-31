@@ -66,6 +66,12 @@ GList* database_get_podcasts(Database *db);
 GList* database_get_podcast_episodes(Database *db, gint podcast_id);
 gboolean database_update_episode_progress(Database *db, gint episode_id, gint position, gboolean played);
 
+/* Preference operations */
+gboolean database_set_preference(Database *db, const gchar *key, const gchar *value);
+gchar* database_get_preference(Database *db, const gchar *key, const gchar *default_value);
+gint database_get_preference_int(Database *db, const gchar *key, gint default_value);
+gboolean database_get_preference_bool(Database *db, const gchar *key, gboolean default_value);
+
 /* Cleanup helpers */
 void track_free(Track *track);
 void playlist_free(Playlist *playlist);

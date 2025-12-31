@@ -31,6 +31,7 @@ static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks);
 static void ui_show_radio_stations(MediaPlayerUI *ui);
 static void on_import_media_clicked(GtkMenuItem *item, gpointer user_data);
 static void on_search_changed(GtkSearchEntry *entry, gpointer user_data);
+static void on_preferences_clicked(GtkMenuItem *item, gpointer user_data);
 
 static void on_seek_changed(GtkRange *range, gpointer user_data) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
@@ -72,6 +73,9 @@ static GtkWidget* create_hamburger_menu(MediaPlayerUI *ui) {
     GtkWidget *preferences_item = gtk_menu_item_new_with_label("Preferences");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), preferences_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+    
+    /* Connect preferences handler */
+    g_signal_connect(preferences_item, "activate", G_CALLBACK(on_preferences_clicked), ui);
     
     GtkWidget *about_item = gtk_menu_item_new_with_label("About Banshee");
     GtkWidget *quit_item = gtk_menu_item_new_with_label("Quit");
@@ -1301,4 +1305,120 @@ void ui_free(MediaPlayerUI *ui) {
     if (ui->genre_browser) browser_view_free(ui->genre_browser);
     
     g_free(ui);
+}
+
+/* Callback for preferences menu item */
+static void on_preferences_clicked(GtkMenuItem *item, gpointer user_data) {
+    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
+    ui_show_preferences_dialog(ui);
+}
+
+/* Preferences dialog */
+void ui_show_preferences_dialog(MediaPlayerUI *ui) {
+    if (!ui) {
+        g_printerr("ui_show_preferences_dialog: ui is NULL\n");
+        return;
+    }
+    
+    if (!ui->database) {
+        g_printerr("ui_show_preferences_dialog: ui->database is NULL\n");
+        return;
+    }
+    
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Preferences",
+        GTK_WINDOW(ui->window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_OK", GTK_RESPONSE_OK,
+        NULL);
+    
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 500, 400);
+    
+    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    gtk_container_set_border_width(GTK_CONTAINER(content_area), 10);
+    
+    /* Create notebook for tabbed preferences */
+    GtkWidget *notebook = gtk_notebook_new();
+    gtk_box_pack_start(GTK_BOX(content_area), notebook, TRUE, TRUE, 0);
+    
+    /* Podcast preferences tab */
+    GtkWidget *podcast_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(podcast_box), 10);
+    
+    /* Update interval setting */
+    GtkWidget *update_frame = gtk_frame_new("RSS Feed Updates");
+    gtk_box_pack_start(GTK_BOX(podcast_box), update_frame, FALSE, FALSE, 0);
+    
+    GtkWidget *update_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_set_border_width(GTK_CONTAINER(update_box), 10);
+    gtk_container_add(GTK_CONTAINER(update_frame), update_box);
+    
+    GtkWidget *update_label_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_pack_start(GTK_BOX(update_box), update_label_box, FALSE, FALSE, 0);
+    
+    GtkWidget *update_label = gtk_label_new("Check for new episodes every:");
+    gtk_box_pack_start(GTK_BOX(update_label_box), update_label, FALSE, FALSE, 0);
+    
+    /* Spin button for days */
+    GtkWidget *update_spin = gtk_spin_button_new_with_range(1, 30, 1);
+    gtk_widget_set_size_request(update_spin, 80, -1);
+    
+    /* Load current preference - with validation */
+    gint current_days = 7;  /* default */
+    if (ui->database && ui->database->db) {
+        current_days = database_get_preference_int(ui->database, "podcast_update_interval_days", 7);
+    }
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(update_spin), (gdouble)current_days);
+    
+    gtk_box_pack_start(GTK_BOX(update_label_box), update_spin, FALSE, FALSE, 0);
+    
+    GtkWidget *days_label = gtk_label_new("day(s)");
+    gtk_box_pack_start(GTK_BOX(update_label_box), days_label, FALSE, FALSE, 0);
+    
+    GtkWidget *help_label = gtk_label_new("Banshee will automatically check for new podcast episodes at this interval.");
+    gtk_label_set_line_wrap(GTK_LABEL(help_label), TRUE);
+    gtk_widget_set_halign(help_label, GTK_ALIGN_START);
+    gtk_style_context_add_class(gtk_widget_get_style_context(help_label), "dim-label");
+    gtk_box_pack_start(GTK_BOX(update_box), help_label, FALSE, FALSE, 0);
+    
+    /* Add podcast tab to notebook */
+    GtkWidget *podcast_label = gtk_label_new("Podcasts");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), podcast_box, podcast_label);
+    
+    /* General preferences tab (for future expansion) */
+    GtkWidget *general_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(general_box), 10);
+    
+    GtkWidget *general_label_widget = gtk_label_new("General settings will appear here.");
+    gtk_box_pack_start(GTK_BOX(general_box), general_label_widget, FALSE, FALSE, 0);
+    
+    GtkWidget *general_label = gtk_label_new("General");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), general_box, general_label);
+    
+    gtk_widget_show_all(dialog);
+    
+    /* Run dialog and save preferences if OK clicked */
+    gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+    
+    if (response == GTK_RESPONSE_OK) {
+        /* Save podcast update interval */
+        gint days = (gint)gtk_spin_button_get_value(GTK_SPIN_BUTTON(update_spin));
+        gchar *days_str = g_strdup_printf("%d", days);
+        
+        if (ui->database && ui->database->db) {
+            gboolean success = database_set_preference(ui->database, "podcast_update_interval_days", days_str);
+            if (success) {
+                g_print("Preferences saved: Podcast update interval set to %d day(s)\n", days);
+            } else {
+                g_printerr("Failed to save preferences\n");
+            }
+        } else {
+            g_printerr("Cannot save preferences: database is not available\n");
+        }
+        
+        g_free(days_str);
+    }
+    
+    gtk_widget_destroy(dialog);
 }

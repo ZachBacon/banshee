@@ -95,6 +95,12 @@ static const char *CREATE_PODCAST_EPISODES_TABLE =
     "UNIQUE(podcast_id, guid)"
     ");";
 
+static const char *CREATE_PREFERENCES_TABLE =
+    "CREATE TABLE IF NOT EXISTS preferences ("
+    "key TEXT PRIMARY KEY,"
+    "value TEXT"
+    ");";
+
 Database* database_new(const gchar *db_path) {
     Database *db = g_new0(Database, 1);
     db->db_path = g_strdup(db_path);
@@ -169,6 +175,14 @@ gboolean database_init_tables(Database *db) {
     
     /* Create podcast_episodes table */
     rc = sqlite3_exec(db->db, CREATE_PODCAST_EPISODES_TABLE, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_printerr("SQL error: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    
+    /* Create preferences table */
+    rc = sqlite3_exec(db->db, CREATE_PREFERENCES_TABLE, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
         g_printerr("SQL error: %s\n", err_msg);
         sqlite3_free(err_msg);
@@ -863,4 +877,106 @@ GList* database_get_podcasts(Database *db) {
     
     sqlite3_finalize(stmt);
     return podcasts;
+}
+
+/* Preference operations */
+gboolean database_set_preference(Database *db, const gchar *key, const gchar *value) {
+    if (!db || !db->db || !key) {
+        g_printerr("database_set_preference: Invalid parameters\n");
+        return FALSE;
+    }
+    
+    const char *sql = "INSERT OR REPLACE INTO preferences (key, value) VALUES (?, ?);";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        g_printerr("Failed to prepare statement for set_preference: %s\n", sqlite3_errmsg(db->db));
+        return FALSE;
+    }
+    
+    sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT);
+    
+    if (value) {
+        sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT);
+    } else {
+        sqlite3_bind_null(stmt, 2);
+    }
+    
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        g_printerr("Failed to execute set_preference: %s\n", sqlite3_errmsg(db->db));
+        sqlite3_finalize(stmt);
+        return FALSE;
+    }
+    
+    sqlite3_finalize(stmt);
+    return TRUE;
+}
+
+gchar* database_get_preference(Database *db, const gchar *key, const gchar *default_value) {
+    if (!db) {
+        g_printerr("database_get_preference: db is NULL\n");
+        return g_strdup(default_value);
+    }
+    
+    if (!db->db) {
+        g_printerr("database_get_preference: db->db is NULL\n");
+        return g_strdup(default_value);
+    }
+    
+    if (!key) {
+        g_printerr("database_get_preference: key is NULL\n");
+        return g_strdup(default_value);
+    }
+    
+    const char *sql = "SELECT value FROM preferences WHERE key = ?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        g_printerr("Failed to prepare statement for get_preference: %s\n", sqlite3_errmsg(db->db));
+        return g_strdup(default_value);
+    }
+    
+    sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT);
+    
+    gchar *result = NULL;
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        const gchar *value = (const gchar *)sqlite3_column_text(stmt, 0);
+        if (value) {
+            result = g_strdup(value);
+        } else {
+            result = g_strdup(default_value);
+        }
+    } else if (rc == SQLITE_DONE) {
+        /* No row found - use default */
+        result = g_strdup(default_value);
+    } else {
+        /* Error occurred */
+        g_printerr("Error reading preference '%s': %s\n", key, sqlite3_errmsg(db->db));
+        result = g_strdup(default_value);
+    }
+    
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+gint database_get_preference_int(Database *db, const gchar *key, gint default_value) {
+    gchar *value_str = database_get_preference(db, key, NULL);
+    if (!value_str) return default_value;
+    
+    gint result = atoi(value_str);
+    g_free(value_str);
+    return result;
+}
+
+gboolean database_get_preference_bool(Database *db, const gchar *key, gboolean default_value) {
+    gchar *value_str = database_get_preference(db, key, NULL);
+    if (!value_str) return default_value;
+    
+    gboolean result = (g_strcmp0(value_str, "true") == 0 || g_strcmp0(value_str, "1") == 0);
+    g_free(value_str);
+    return result;
 }
