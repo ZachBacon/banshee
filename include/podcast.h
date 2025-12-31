@@ -97,13 +97,32 @@ typedef struct {
     gchar *url;
 } PodcastChapter;
 
-/* Podcast Manager */
+/* Forward declaration for PodcastManager */
+typedef struct _PodcastManager PodcastManager;
+
+/* Download progress callback */
+typedef void (*DownloadProgressCallback)(gpointer user_data, gint episode_id, gdouble progress, const gchar *status);
+typedef void (*DownloadCompleteCallback)(gpointer user_data, gint episode_id, gboolean success, const gchar *error_msg);
+
+/* Download task structure */
 typedef struct {
+    PodcastEpisode *episode;
+    PodcastManager *manager;
+    DownloadProgressCallback progress_callback;
+    DownloadCompleteCallback complete_callback;
+    gpointer user_data;
+    gboolean cancelled;
+} DownloadTask;
+
+/* Podcast Manager */
+struct _PodcastManager {
     Database *database;
     GList *podcasts;
     GThreadPool *download_pool;
     gchar *download_dir;
-} PodcastManager;
+    GHashTable *active_downloads; /* episode_id -> DownloadTask */
+    GMutex downloads_mutex;
+};
 
 /* Podcast Manager */
 PodcastManager* podcast_manager_new(Database *database);
@@ -118,7 +137,11 @@ GList* podcast_manager_get_podcasts(PodcastManager *manager);
 GList* podcast_manager_get_episodes(PodcastManager *manager, gint podcast_id);
 
 /* Episode operations */
-void podcast_episode_download(PodcastManager *manager, PodcastEpisode *episode);
+void podcast_episode_download(PodcastManager *manager, PodcastEpisode *episode, 
+                             DownloadProgressCallback progress_cb, 
+                             DownloadCompleteCallback complete_cb,
+                             gpointer user_data);
+void podcast_episode_cancel_download(PodcastManager *manager, gint episode_id);
 void podcast_episode_delete(PodcastManager *manager, PodcastEpisode *episode);
 void podcast_episode_mark_played(PodcastManager *manager, gint episode_id, gboolean played);
 void podcast_episode_update_position(PodcastManager *manager, gint episode_id, gint position);

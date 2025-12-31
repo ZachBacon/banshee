@@ -7,6 +7,11 @@ static void on_transcript_button_clicked(GtkButton *button, gpointer user_data);
 static void on_support_button_clicked(GtkButton *button, gpointer user_data);
 static void on_chapter_seek(gpointer user_data, gdouble time);
 static void on_funding_url_clicked(GtkWidget *button, gpointer user_data);
+static void on_cancel_button_clicked(GtkButton *button, gpointer user_data);
+
+/* Download callbacks */
+static void on_download_progress(gpointer user_data, gint episode_id, gdouble progress, const gchar *status);
+static void on_download_complete(gpointer user_data, gint episode_id, gboolean success, const gchar *error_msg);
 
 enum {
     PODCAST_COL_ID,
@@ -63,6 +68,16 @@ static void on_download_button_clicked(GtkButton *button, gpointer user_data) {
         gint episode_id;
         gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
         podcast_view_download_episode(view, episode_id);
+    }
+}
+
+static void on_cancel_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    
+    if (view->current_download_id > 0) {
+        podcast_episode_cancel_download(view->podcast_manager, view->current_download_id);
+        gtk_label_set_text(GTK_LABEL(view->progress_label), "Cancelling download...");
     }
 }
 
@@ -227,6 +242,10 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     view->podcast_manager = manager;
     view->database = database;
     view->selected_podcast_id = -1;
+    view->current_download_id = -1;
+    
+    /* Initialize download progress tracking */
+    view->download_progress = g_hash_table_new(g_direct_hash, g_direct_equal);
     
     /* Initialize episode-specific data */
     view->chapter_view = NULL;
@@ -267,6 +286,12 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->download_button), -1);
     g_signal_connect(view->download_button, "clicked", G_CALLBACK(on_download_button_clicked), view);
     
+    view->cancel_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Cancel"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->cancel_button), "process-stop");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->cancel_button), -1);
+    g_signal_connect(view->cancel_button, "clicked", G_CALLBACK(on_cancel_button_clicked), view);
+    gtk_widget_set_sensitive(view->cancel_button, FALSE);
+    
     /* Add separator before episode-specific buttons */
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
     
@@ -290,6 +315,22 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     g_signal_connect(view->support_button, "clicked", G_CALLBACK(on_support_button_clicked), view);
     
     gtk_box_pack_start(GTK_BOX(view->container), toolbar, FALSE, FALSE, 0);
+    
+    /* Progress bar for downloads */
+    view->progress_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_set_border_width(GTK_CONTAINER(view->progress_box), 5);
+    
+    view->progress_label = gtk_label_new("");
+    gtk_widget_set_halign(view->progress_label, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(view->progress_box), view->progress_label, FALSE, FALSE, 0);
+    
+    view->progress_bar = gtk_progress_bar_new();
+    gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(view->progress_bar), TRUE);
+    gtk_box_pack_start(GTK_BOX(view->progress_box), view->progress_bar, FALSE, FALSE, 0);
+    
+    gtk_box_pack_start(GTK_BOX(view->container), view->progress_box, FALSE, FALSE, 0);
+    /* Initially hide the progress box */
+    gtk_widget_set_visible(view->progress_box, FALSE);
     
     /* Paned container for podcast list and episode list */
     view->paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
@@ -374,6 +415,11 @@ void podcast_view_free(PodcastView *view) {
     g_free(view->current_transcript_type);
     if (view->current_funding) {
         g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+    }
+    
+    /* Clean up download progress tracking */
+    if (view->download_progress) {
+        g_hash_table_destroy(view->download_progress);
     }
     
     g_free(view);
@@ -600,10 +646,27 @@ void podcast_view_download_episode(PodcastView *view, gint episode_id) {
         if (episode->id == episode_id) {
             if (!episode->downloaded) {
                 g_print("Downloading episode: %s\n", episode->title);
-                podcast_episode_download(view->podcast_manager, episode);
                 
-                /* Refresh the episode list to show download status */
-                podcast_view_refresh_episodes(view, view->selected_podcast_id);
+                /* Store current download ID */
+                view->current_download_id = episode_id;
+                
+                /* Show progress UI */
+                gtk_widget_set_visible(view->progress_box, TRUE);
+                gtk_label_set_text(GTK_LABEL(view->progress_label), episode->title);
+                gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(view->progress_bar), 0.0);
+                gtk_widget_set_sensitive(view->download_button, FALSE);
+                gtk_widget_set_sensitive(view->cancel_button, TRUE);
+                
+                /* Make a copy of the episode for the async download */
+                PodcastEpisode *episode_copy = g_new0(PodcastEpisode, 1);
+                episode_copy->id = episode->id;
+                episode_copy->podcast_id = episode->podcast_id;
+                episode_copy->enclosure_url = g_strdup(episode->enclosure_url);
+                episode_copy->title = g_strdup(episode->title);
+                
+                /* Start download with callbacks */
+                podcast_episode_download(view->podcast_manager, episode_copy, 
+                                       on_download_progress, on_download_complete, view);
             } else {
                 g_print("Episode already downloaded: %s\n", episode->local_file_path);
             }
@@ -612,6 +675,96 @@ void podcast_view_download_episode(PodcastView *view, gint episode_id) {
     }
     
     g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
+}
+
+/* Download progress callback - runs on main thread via g_idle_add */
+typedef struct {
+    PodcastView *view;
+    gint episode_id;
+    gdouble progress;
+    gchar *status;
+} ProgressUpdate;
+
+static gboolean update_progress_ui(gpointer user_data) {
+    ProgressUpdate *update = (ProgressUpdate *)user_data;
+    
+    if (update->view && update->view->current_download_id == update->episode_id) {
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(update->view->progress_bar), update->progress);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(update->view->progress_bar), 
+                                 g_strdup_printf("%.0f%%", update->progress * 100));
+        if (update->status) {
+            gtk_label_set_text(GTK_LABEL(update->view->progress_label), update->status);
+        }
+    }
+    
+    g_free(update->status);
+    g_free(update);
+    return G_SOURCE_REMOVE;
+}
+
+static void on_download_progress(gpointer user_data, gint episode_id, gdouble progress, const gchar *status) {
+    PodcastView *view = (PodcastView *)user_data;
+    
+    /* Schedule UI update on main thread */
+    ProgressUpdate *update = g_new0(ProgressUpdate, 1);
+    update->view = view;
+    update->episode_id = episode_id;
+    update->progress = progress;
+    update->status = g_strdup(status);
+    
+    g_idle_add(update_progress_ui, update);
+}
+
+typedef struct {
+    PodcastView *view;
+    gint episode_id;
+    gboolean success;
+    gchar *error_msg;
+} CompleteUpdate;
+
+static gboolean update_complete_ui(gpointer user_data) {
+    CompleteUpdate *update = (CompleteUpdate *)user_data;
+    
+    if (update->view && update->view->current_download_id == update->episode_id) {
+        if (update->success) {
+            gtk_label_set_text(GTK_LABEL(update->view->progress_label), "Download complete!");
+            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(update->view->progress_bar), 1.0);
+            gtk_progress_bar_set_text(GTK_PROGRESS_BAR(update->view->progress_bar), "100%");
+            
+            /* Refresh the episode list to show download status */
+            podcast_view_refresh_episodes(update->view, update->view->selected_podcast_id);
+        } else {
+            gchar *msg = g_strdup_printf("Download failed: %s", 
+                                        update->error_msg ? update->error_msg : "Unknown error");
+            gtk_label_set_text(GTK_LABEL(update->view->progress_label), msg);
+            g_free(msg);
+        }
+        
+        /* Hide progress UI after a delay or reset it */
+        update->view->current_download_id = -1;
+        gtk_widget_set_sensitive(update->view->download_button, TRUE);
+        gtk_widget_set_sensitive(update->view->cancel_button, FALSE);
+        
+        /* Auto-hide progress after 3 seconds */
+        g_timeout_add_seconds(3, (GSourceFunc)gtk_widget_hide, update->view->progress_box);
+    }
+    
+    g_free(update->error_msg);
+    g_free(update);
+    return G_SOURCE_REMOVE;
+}
+
+static void on_download_complete(gpointer user_data, gint episode_id, gboolean success, const gchar *error_msg) {
+    PodcastView *view = (PodcastView *)user_data;
+    
+    /* Schedule UI update on main thread */
+    CompleteUpdate *update = g_new0(CompleteUpdate, 1);
+    update->view = view;
+    update->episode_id = episode_id;
+    update->success = success;
+    update->error_msg = g_strdup(error_msg);
+    
+    g_idle_add(update_complete_ui, update);
 }
 void podcast_view_update_episode_features(PodcastView *view, GList *chapters, const gchar *transcript_url, const gchar *transcript_type, GList *funding) {
     if (!view) return;

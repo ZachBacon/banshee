@@ -121,7 +121,11 @@ PodcastManager* podcast_manager_new(Database *database) {
     manager->download_dir = g_build_filename(g_get_user_data_dir(), "banshee", "podcasts", NULL);
     g_mkdir_with_parents(manager->download_dir, 0755);
     
-    /* Thread pool will be created later when needed */
+    /* Initialize downloads tracking - NULL destroy func since we manage task lifecycle */
+    manager->active_downloads = g_hash_table_new(g_direct_hash, g_direct_equal);
+    g_mutex_init(&manager->downloads_mutex);
+    
+    /* Create thread pool for downloads (max 3 concurrent downloads) */
     manager->download_pool = NULL;
     
     return manager;
@@ -134,6 +138,10 @@ void podcast_manager_free(PodcastManager *manager) {
     if (manager->download_pool) {
         g_thread_pool_free(manager->download_pool, FALSE, TRUE);
     }
+    if (manager->active_downloads) {
+        g_hash_table_destroy(manager->active_downloads);
+    }
+    g_mutex_clear(&manager->downloads_mutex);
     g_free(manager->download_dir);
     g_free(manager);
 }
@@ -671,8 +679,45 @@ static size_t write_file_callback(void *ptr, size_t size, size_t nmemb, FILE *st
     return fwrite(ptr, size, nmemb, stream);
 }
 
-void podcast_episode_download(PodcastManager *manager, PodcastEpisode *episode) {
-    if (!manager || !episode || !episode->enclosure_url) return;
+/* Progress callback for curl */
+static int download_progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow, 
+                                      curl_off_t ultotal, curl_off_t ulnow) {
+    (void)ultotal;
+    (void)ulnow;
+    
+    DownloadTask *task = (DownloadTask *)clientp;
+    
+    /* Check if download was cancelled */
+    if (task->cancelled) {
+        return 1;  /* Non-zero return value cancels download */
+    }
+    
+    /* Calculate progress */
+    if (dltotal > 0 && task->progress_callback) {
+        gdouble progress = (gdouble)dlnow / (gdouble)dltotal;
+        
+        /* Format status message */
+        gchar *status = g_strdup_printf("Downloading: %.1f MB / %.1f MB", 
+                                       dlnow / 1048576.0, dltotal / 1048576.0);
+        
+        /* Call progress callback on main thread */
+        task->progress_callback(task->user_data, task->episode->id, progress, status);
+        g_free(status);
+    }
+    
+    return 0;
+}
+
+/* Thread function for downloading */
+static void download_thread_func(gpointer data, gpointer user_data) {
+    DownloadTask *task = (DownloadTask *)data;
+    PodcastManager *manager = task->manager;
+    PodcastEpisode *episode = task->episode;
+    (void)user_data;
+    
+    gboolean success = FALSE;
+    gchar *error_msg = NULL;
+    gchar *local_path = NULL;
     
     /* Create download directory if it doesn't exist */
     g_mkdir_with_parents(manager->download_dir, 0755);
@@ -685,34 +730,39 @@ void podcast_episode_download(PodcastManager *manager, PodcastEpisode *episode) 
     gchar *query = strchr(safe_basename, '?');
     if (query) *query = '\0';
     
-    gchar *local_path = g_build_filename(manager->download_dir, safe_basename, NULL);
+    local_path = g_build_filename(manager->download_dir, safe_basename, NULL);
     g_free(basename);
     g_free(safe_basename);
     
-    g_print("Downloading %s to %s\n", episode->enclosure_url, local_path);
+    if (task->progress_callback) {
+        task->progress_callback(task->user_data, episode->id, 0.0, "Initializing download...");
+    }
     
     /* Download file using curl */
     CURL *curl = curl_easy_init();
     if (!curl) {
-        g_warning("Failed to initialize curl");
-        g_free(local_path);
-        return;
+        error_msg = g_strdup("Failed to initialize curl");
+        goto cleanup;
     }
     
     FILE *fp = fopen(local_path, "wb");
     if (!fp) {
-        g_warning("Failed to open file for writing: %s", local_path);
+        error_msg = g_strdup_printf("Failed to open file for writing: %s", local_path);
         curl_easy_cleanup(curl);
-        g_free(local_path);
-        return;
+        goto cleanup;
     }
     
     curl_easy_setopt(curl, CURLOPT_URL, episode->enclosure_url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_file_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);  /* 5 minute timeout */
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);  /* 10 minute timeout */
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "Banshee Media Player/1.0");
+    
+    /* Set up progress tracking */
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, download_progress_callback);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, task);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     
     CURLcode res = curl_easy_perform(curl);
     
@@ -720,13 +770,14 @@ void podcast_episode_download(PodcastManager *manager, PodcastEpisode *episode) 
     curl_easy_cleanup(curl);
     
     if (res != CURLE_OK) {
-        g_warning("Download failed: %s", curl_easy_strerror(res));
+        if (task->cancelled) {
+            error_msg = g_strdup("Download cancelled");
+        } else {
+            error_msg = g_strdup_printf("Download failed: %s", curl_easy_strerror(res));
+        }
         unlink(local_path);
-        g_free(local_path);
-        return;
+        goto cleanup;
     }
-    
-    g_print("Download complete: %s\n", local_path);
     
     /* Update database */
     sqlite3_stmt *stmt;
@@ -739,7 +790,98 @@ void podcast_episode_download(PodcastManager *manager, PodcastEpisode *episode) 
         sqlite3_finalize(stmt);
     }
     
+    success = TRUE;
+    
+cleanup:
+    /* Remove from active downloads */
+    g_mutex_lock(&manager->downloads_mutex);
+    g_hash_table_remove(manager->active_downloads, GINT_TO_POINTER(episode->id));
+    g_mutex_unlock(&manager->downloads_mutex);
+    
+    /* Call completion callback */
+    if (task->complete_callback) {
+        task->complete_callback(task->user_data, episode->id, success, error_msg);
+    }
+    
     g_free(local_path);
+    g_free(error_msg);
+    
+    /* Free the episode copy (only the fields we allocated) */
+    g_free(episode->enclosure_url);
+    g_free(episode->title);
+    g_free(episode);
+    
+    g_free(task);
+}
+
+void podcast_episode_download(PodcastManager *manager, PodcastEpisode *episode,
+                             DownloadProgressCallback progress_cb,
+                             DownloadCompleteCallback complete_cb,
+                             gpointer user_data) {
+    if (!manager || !episode || !episode->enclosure_url) return;
+    
+    /* Check if already downloading */
+    g_mutex_lock(&manager->downloads_mutex);
+    if (g_hash_table_contains(manager->active_downloads, GINT_TO_POINTER(episode->id))) {
+        g_mutex_unlock(&manager->downloads_mutex);
+        g_print("Episode is already being downloaded\n");
+        return;
+    }
+    
+    /* Create download task */
+    DownloadTask *task = g_new0(DownloadTask, 1);
+    task->episode = episode;  /* Episode will be freed by thread */
+    task->manager = manager;
+    task->progress_callback = progress_cb;
+    task->complete_callback = complete_cb;
+    task->user_data = user_data;
+    task->cancelled = FALSE;
+    
+    /* Add to active downloads */
+    g_hash_table_insert(manager->active_downloads, GINT_TO_POINTER(episode->id), task);
+    g_mutex_unlock(&manager->downloads_mutex);
+    
+    /* Create thread pool if it doesn't exist */
+    if (!manager->download_pool) {
+        GError *error = NULL;
+        manager->download_pool = g_thread_pool_new(download_thread_func, NULL, 3, FALSE, &error);
+        if (error) {
+            g_warning("Failed to create download thread pool: %s", error->message);
+            g_error_free(error);
+            
+            g_mutex_lock(&manager->downloads_mutex);
+            g_hash_table_remove(manager->active_downloads, GINT_TO_POINTER(episode->id));
+            g_mutex_unlock(&manager->downloads_mutex);
+            
+            g_free(task);
+            return;
+        }
+    }
+    
+    /* Queue the download */
+    GError *error = NULL;
+    g_thread_pool_push(manager->download_pool, task, &error);
+    if (error) {
+        g_warning("Failed to queue download: %s", error->message);
+        g_error_free(error);
+        
+        g_mutex_lock(&manager->downloads_mutex);
+        g_hash_table_remove(manager->active_downloads, GINT_TO_POINTER(episode->id));
+        g_mutex_unlock(&manager->downloads_mutex);
+        
+        g_free(task);
+    }
+}
+
+void podcast_episode_cancel_download(PodcastManager *manager, gint episode_id) {
+    if (!manager) return;
+    
+    g_mutex_lock(&manager->downloads_mutex);
+    DownloadTask *task = g_hash_table_lookup(manager->active_downloads, GINT_TO_POINTER(episode_id));
+    if (task) {
+        task->cancelled = TRUE;
+    }
+    g_mutex_unlock(&manager->downloads_mutex);
 }
 
 void podcast_episode_delete(PodcastManager *manager, PodcastEpisode *episode) {

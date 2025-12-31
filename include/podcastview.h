@@ -27,6 +27,14 @@ typedef struct {
     GtkWidget *remove_button;
     GtkWidget *refresh_button;
     GtkWidget *download_button;
+    GtkWidget *cancel_button;
+    
+    /* Download progress tracking */
+    GtkWidget *progress_bar;
+    GtkWidget *progress_label;
+    GtkWidget *progress_box;
+    GHashTable *download_progress;  /* episode_id -> gdouble (progress) */
+    gint current_download_id;
     
     /* Episode-specific buttons */
     GtkWidget *chapters_button;
