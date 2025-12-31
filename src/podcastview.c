@@ -96,6 +96,222 @@ static void on_episode_row_activated(GtkTreeView *treeview, GtkTreePath *path,
     }
 }
 
+/* Helper function to replace all occurrences of a string */
+static gchar* str_replace_all(const gchar *input, const gchar *search, const gchar *replace) {
+    GString *result = g_string_new("");
+    const gchar *p = input;
+    gsize search_len = strlen(search);
+    gsize replace_len = strlen(replace);
+    
+    while (*p) {
+        if (strncmp(p, search, search_len) == 0) {
+            g_string_append_len(result, replace, replace_len);
+            p += search_len;
+        } else {
+            g_string_append_c(result, *p);
+            p++;
+        }
+    }
+    
+    gchar *output = result->str;
+    g_string_free(result, FALSE);
+    return output;
+}
+
+/* Helper function to strip HTML tags and decode common HTML entities */
+static gchar* strip_html_and_decode(const gchar *html) {
+    if (!html || strlen(html) == 0) {
+        return g_strdup("");
+    }
+    
+    /* Simple HTML tag stripper - remove everything between < and > */
+    GString *result = g_string_new("");
+    gboolean in_tag = FALSE;
+    const gchar *p = html;
+    
+    while (*p) {
+        if (*p == '<') {
+            in_tag = TRUE;
+        } else if (*p == '>') {
+            in_tag = FALSE;
+        } else if (!in_tag) {
+            g_string_append_c(result, *p);
+        }
+        p++;
+    }
+    
+    gchar *stripped = result->str;
+    g_string_free(result, FALSE);
+    
+    /* Decode common HTML entities - must decode &amp; last to avoid double-decoding */
+    gchar *temp = stripped;
+    gchar *decoded = str_replace_all(temp, "&lt;", "<");
+    g_free(temp);
+    temp = decoded;
+    decoded = str_replace_all(temp, "&gt;", ">");
+    g_free(temp);
+    temp = decoded;
+    decoded = str_replace_all(temp, "&quot;", "\"");
+    g_free(temp);
+    temp = decoded;
+    decoded = str_replace_all(temp, "&apos;", "'");
+    g_free(temp);
+    temp = decoded;
+    decoded = str_replace_all(temp, "&#39;", "'");
+    g_free(temp);
+    temp = decoded;
+    decoded = str_replace_all(temp, "&amp;", "&");
+    g_free(temp);
+    
+    /* Remove extra whitespace */
+    g_strstrip(decoded);
+    
+    return decoded;
+}
+
+static gboolean on_episode_query_tooltip(GtkWidget *widget, gint x, gint y, 
+                                         gboolean keyboard_mode, GtkTooltip *tooltip,
+                                         gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    GtkTreeView *treeview = GTK_TREE_VIEW(widget);
+    GtkTreeModel *model;
+    GtkTreePath *path = NULL;
+    GtkTreeIter iter;
+    
+    (void)keyboard_mode;
+    
+    /* Get the path at the mouse position */
+    if (!gtk_tree_view_get_path_at_pos(treeview, x, y, &path, NULL, NULL, NULL)) {
+        return FALSE;
+    }
+    
+    model = gtk_tree_view_get_model(treeview);
+    if (!gtk_tree_model_get_iter(model, &iter, path)) {
+        gtk_tree_path_free(path);
+        return FALSE;
+    }
+    
+    gint episode_id;
+    gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
+    gtk_tree_path_free(path);
+    
+    /* Get episode details from database */
+    GList *episodes = database_get_podcast_episodes(view->database, view->selected_podcast_id);
+    PodcastEpisode *found_episode = NULL;
+    
+    for (GList *l = episodes; l != NULL; l = l->next) {
+        PodcastEpisode *episode = (PodcastEpisode *)l->data;
+        if (episode->id == episode_id) {
+            found_episode = episode;
+            break;
+        }
+    }
+    
+    if (!found_episode) {
+        g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
+        return FALSE;
+    }
+    
+    /* Build tooltip markup */
+    GString *markup = g_string_new("");
+    
+    /* Episode title (bold) - escape it for markup */
+    gchar *escaped_title = g_markup_escape_text(found_episode->title, -1);
+    g_string_append_printf(markup, "<b>%s</b>\n\n", escaped_title);
+    g_free(escaped_title);
+    
+    /* Description - strip HTML and decode entities */
+    if (found_episode->description && strlen(found_episode->description) > 0) {
+        gchar *plain_desc = strip_html_and_decode(found_episode->description);
+        
+        /* Limit description length for tooltip */
+        gsize desc_len = strlen(plain_desc);
+        if (desc_len > 300) {
+            gchar *truncated = g_strndup(plain_desc, 297);
+            gchar *escaped_desc = g_markup_escape_text(truncated, -1);
+            g_string_append_printf(markup, "%s...\n\n", escaped_desc);
+            g_free(escaped_desc);
+            g_free(truncated);
+        } else if (desc_len > 0) {
+            gchar *escaped_desc = g_markup_escape_text(plain_desc, -1);
+            g_string_append_printf(markup, "%s\n\n", escaped_desc);
+            g_free(escaped_desc);
+        }
+        g_free(plain_desc);
+    }
+    
+    /* Episode metadata */
+    if (found_episode->duration > 0) {
+        gint hours = found_episode->duration / 3600;
+        gint minutes = (found_episode->duration % 3600) / 60;
+        gint seconds = found_episode->duration % 60;
+        
+        g_string_append(markup, "<b>Duration:</b> ");
+        if (hours > 0) {
+            g_string_append_printf(markup, "%dh %dm %ds\n", hours, minutes, seconds);
+        } else {
+            g_string_append_printf(markup, "%dm %ds\n", minutes, seconds);
+        }
+    }
+    
+    /* Season and episode number */
+    if (found_episode->season || found_episode->episode_num) {
+        g_string_append(markup, "<b>Episode:</b> ");
+        if (found_episode->season) {
+            gchar *escaped_season = g_markup_escape_text(found_episode->season, -1);
+            g_string_append_printf(markup, "Season %s", escaped_season);
+            g_free(escaped_season);
+        }
+        if (found_episode->episode_num) {
+            gchar *escaped_episode = g_markup_escape_text(found_episode->episode_num, -1);
+            if (found_episode->season) {
+                g_string_append_printf(markup, ", Episode %s", escaped_episode);
+            } else {
+                g_string_append_printf(markup, "Episode %s", escaped_episode);
+            }
+            g_free(escaped_episode);
+        }
+        g_string_append(markup, "\n");
+    }
+    
+    /* Download status */
+    if (found_episode->downloaded) {
+        g_string_append(markup, "<b>Status:</b> Downloaded\n");
+    }
+    
+    /* Play position */
+    if (found_episode->play_position > 0) {
+        gint pos_hours = found_episode->play_position / 3600;
+        gint pos_minutes = (found_episode->play_position % 3600) / 60;
+        gint pos_seconds = found_episode->play_position % 60;
+        
+        g_string_append(markup, "<b>Position:</b> ");
+        if (pos_hours > 0) {
+            g_string_append_printf(markup, "%dh %dm %ds\n", pos_hours, pos_minutes, pos_seconds);
+        } else {
+            g_string_append_printf(markup, "%dm %ds\n", pos_minutes, pos_seconds);
+        }
+    }
+    
+    /* Podcast 2.0 features */
+    if (found_episode->transcript_url) {
+        g_string_append(markup, "📝 <i>Transcript available</i>\n");
+    }
+    if (found_episode->chapters_url || (found_episode->enclosure_url && strstr(found_episode->enclosure_url, ".mp3"))) {
+        g_string_append(markup, "📑 <i>Chapters available</i>\n");
+    }
+    if (found_episode->funding && g_list_length(found_episode->funding) > 0) {
+        g_string_append(markup, "💝 <i>Support options available</i>\n");
+    }
+    
+    gtk_tooltip_set_markup(tooltip, markup->str);
+    
+    g_string_free(markup, TRUE);
+    g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
+    
+    return TRUE;
+}
+
 static void on_chapter_seek(gpointer user_data, gdouble time) {
     PodcastView *view = (PodcastView *)user_data;
     
@@ -371,6 +587,11 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     
     view->episode_listview = gtk_tree_view_new_with_model(GTK_TREE_MODEL(view->episode_store));
     gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view->episode_listview), TRUE);
+    
+    /* Enable tooltips for episodes */
+    gtk_widget_set_has_tooltip(view->episode_listview, TRUE);
+    g_signal_connect(view->episode_listview, "query-tooltip", 
+                     G_CALLBACK(on_episode_query_tooltip), view);
     
     renderer = gtk_cell_renderer_text_new();
     column = gtk_tree_view_column_new_with_attributes("Episode", renderer, "text", EPISODE_COL_TITLE, NULL);
