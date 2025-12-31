@@ -930,6 +930,12 @@ MediaPlayerUI* ui_new(MediaPlayer *player, Database *database) {
     ui->coverart_manager = coverart_manager_new();
     ui->podcast_manager = podcast_manager_new(database);
     
+    /* Start automatic podcast feed updates based on preference */
+    if (ui->podcast_manager && database && database->db) {
+        gint update_interval = database_get_preference_int(database, "podcast_update_interval_days", 7);
+        podcast_manager_start_auto_update(ui->podcast_manager, update_interval);
+    }
+    
     /* Create window */
     ui->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(ui->window), "Banshee Media Player");
@@ -1265,6 +1271,11 @@ void ui_update_position(MediaPlayerUI *ui, gint64 position, gint64 duration) {
 void ui_free(MediaPlayerUI *ui) {
     if (!ui) return;
     
+    /* Free podcast manager */
+    if (ui->podcast_manager) {
+        podcast_manager_free(ui->podcast_manager);
+    }
+    
     /* Free current chapters */
     if (ui->current_chapters) {
         g_list_free_full(ui->current_chapters, (GDestroyNotify)podcast_chapter_free);
@@ -1410,6 +1421,11 @@ void ui_show_preferences_dialog(MediaPlayerUI *ui) {
             gboolean success = database_set_preference(ui->database, "podcast_update_interval_days", days_str);
             if (success) {
                 g_print("Preferences saved: Podcast update interval set to %d day(s)\n", days);
+                
+                /* Restart auto-update timer with new interval */
+                if (ui->podcast_manager) {
+                    podcast_manager_start_auto_update(ui->podcast_manager, days);
+                }
             } else {
                 g_printerr("Failed to save preferences\n");
             }

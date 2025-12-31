@@ -122,11 +122,17 @@ struct _PodcastManager {
     gchar *download_dir;
     GHashTable *active_downloads; /* episode_id -> DownloadTask */
     GMutex downloads_mutex;
+    guint update_timer_id;  /* Timer for automatic feed updates */
+    gint update_interval_days;  /* Update interval in days */
 };
 
 /* Podcast Manager */
 PodcastManager* podcast_manager_new(Database *database);
 void podcast_manager_free(PodcastManager *manager);
+
+/* Auto-update timer management */
+void podcast_manager_start_auto_update(PodcastManager *manager, gint interval_days);
+void podcast_manager_stop_auto_update(PodcastManager *manager);
 
 /* Podcast operations */
 gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_url);

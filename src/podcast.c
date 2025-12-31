@@ -109,6 +109,8 @@ gchar* fetch_url(const gchar *url) {
 PodcastManager* podcast_manager_new(Database *database) {
     PodcastManager *manager = g_new0(PodcastManager, 1);
     manager->database = database;
+    manager->update_timer_id = 0;
+    manager->update_interval_days = 0;
     
     /* Load existing podcasts from database */
     manager->podcasts = database_get_podcasts(database);
@@ -133,6 +135,9 @@ PodcastManager* podcast_manager_new(Database *database) {
 
 void podcast_manager_free(PodcastManager *manager) {
     if (!manager) return;
+    
+    /* Stop auto-update timer */
+    podcast_manager_stop_auto_update(manager);
     
     g_list_free_full(manager->podcasts, (GDestroyNotify)podcast_free);
     if (manager->download_pool) {
@@ -658,9 +663,56 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
 void podcast_manager_update_all_feeds(PodcastManager *manager) {
     if (!manager) return;
     
+    g_print("Automatically checking for new podcast episodes...\n");
+    
     for (GList *l = manager->podcasts; l != NULL; l = l->next) {
         Podcast *podcast = (Podcast *)l->data;
         podcast_manager_update_feed(manager, podcast->id);
+    }
+}
+
+/* Timer callback for automatic feed updates */
+static gboolean podcast_update_timer_callback(gpointer user_data) {
+    PodcastManager *manager = (PodcastManager *)user_data;
+    
+    if (manager && manager->podcasts) {
+        podcast_manager_update_all_feeds(manager);
+    }
+    
+    return TRUE;  /* Continue timer */
+}
+
+/* Start automatic feed update timer */
+void podcast_manager_start_auto_update(PodcastManager *manager, gint interval_days) {
+    if (!manager) return;
+    
+    /* Stop existing timer if any */
+    podcast_manager_stop_auto_update(manager);
+    
+    manager->update_interval_days = interval_days;
+    
+    if (interval_days > 0) {
+        /* Convert days to seconds for GLib timer */
+        guint interval_seconds = interval_days * 24 * 60 * 60;
+        
+        manager->update_timer_id = g_timeout_add_seconds(
+            interval_seconds,
+            podcast_update_timer_callback,
+            manager
+        );
+        
+        g_print("Podcast auto-update enabled: checking every %d day(s)\n", interval_days);
+    }
+}
+
+/* Stop automatic feed update timer */
+void podcast_manager_stop_auto_update(PodcastManager *manager) {
+    if (!manager) return;
+    
+    if (manager->update_timer_id > 0) {
+        g_source_remove(manager->update_timer_id);
+        manager->update_timer_id = 0;
+        g_print("Podcast auto-update disabled\n");
     }
 }
 
