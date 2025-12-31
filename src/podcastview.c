@@ -819,12 +819,15 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
         return;
     }
     
-    /* Filter podcasts by title or author */
     GList *all_podcasts = database_get_podcasts(view->database);
     gtk_list_store_clear(view->podcast_store);
     
     gchar *search_lower = g_utf8_strdown(search_text, -1);
     
+    /* Track which podcasts have matching episodes */
+    GHashTable *podcasts_with_matches = g_hash_table_new(g_direct_hash, g_direct_equal);
+    
+    /* First, add podcasts that match by title or author */
     for (GList *l = all_podcasts; l != NULL; l = l->next) {
         Podcast *podcast = (Podcast *)l->data;
         gchar *title_lower = g_utf8_strdown(podcast->title ? podcast->title : "", -1);
@@ -837,25 +840,17 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
         g_free(author_lower);
         
         if (match) {
-            GtkTreeIter iter;
-            gtk_list_store_append(view->podcast_store, &iter);
-            gtk_list_store_set(view->podcast_store, &iter,
-                             PODCAST_COL_ID, podcast->id,
-                             PODCAST_COL_TITLE, podcast->title,
-                             PODCAST_COL_AUTHOR, podcast->author,
-                             -1);
+            g_hash_table_add(podcasts_with_matches, GINT_TO_POINTER(podcast->id));
         }
     }
     
-    g_free(search_lower);
-    g_list_free_full(all_podcasts, (GDestroyNotify)podcast_free);
+    /* Search through episodes from ALL podcasts and track which podcasts have matches */
+    gtk_list_store_clear(view->episode_store);
     
-    /* Also filter episodes if a podcast is selected */
-    if (view->selected_podcast_id > 0) {
-        GList *all_episodes = database_get_podcast_episodes(view->database, view->selected_podcast_id);
-        gtk_list_store_clear(view->episode_store);
-        
-        search_lower = g_utf8_strdown(search_text, -1);
+    for (GList *p = all_podcasts; p != NULL; p = p->next) {
+        Podcast *podcast = (Podcast *)p->data;
+        GList *all_episodes = database_get_podcast_episodes(view->database, podcast->id);
+        gboolean podcast_has_episode_match = FALSE;
         
         for (GList *l = all_episodes; l != NULL; l = l->next) {
             PodcastEpisode *episode = (PodcastEpisode *)l->data;
@@ -869,6 +864,8 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
             g_free(desc_lower);
             
             if (match) {
+                podcast_has_episode_match = TRUE;
+                
                 GtkTreeIter iter;
                 gtk_list_store_append(view->episode_store, &iter);
                 
@@ -905,7 +902,30 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
             }
         }
         
-        g_free(search_lower);
+        /* Add podcast to list if it has matching episodes */
+        if (podcast_has_episode_match) {
+            g_hash_table_add(podcasts_with_matches, GINT_TO_POINTER(podcast->id));
+        }
+        
         g_list_free_full(all_episodes, (GDestroyNotify)podcast_episode_free);
     }
+    
+    /* Now populate the podcast list with all podcasts that have matches */
+    for (GList *l = all_podcasts; l != NULL; l = l->next) {
+        Podcast *podcast = (Podcast *)l->data;
+        
+        if (g_hash_table_contains(podcasts_with_matches, GINT_TO_POINTER(podcast->id))) {
+            GtkTreeIter iter;
+            gtk_list_store_append(view->podcast_store, &iter);
+            gtk_list_store_set(view->podcast_store, &iter,
+                             PODCAST_COL_ID, podcast->id,
+                             PODCAST_COL_TITLE, podcast->title,
+                             PODCAST_COL_AUTHOR, podcast->author,
+                             -1);
+        }
+    }
+    
+    g_free(search_lower);
+    g_hash_table_destroy(podcasts_with_matches);
+    g_list_free_full(all_podcasts, (GDestroyNotify)podcast_free);
 }
