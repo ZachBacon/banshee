@@ -126,7 +126,6 @@ int main(int argc, char *argv[]) {
     }
     
     g_print("%s v%s\n", APP_NAME, VERSION);
-    g_print("Database location: %s/.local/share/banshee/library.db\n", g_get_home_dir());
     
     /* UI is shown in ui_new() - no need to call ui_show */
     

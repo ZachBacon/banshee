@@ -71,6 +71,7 @@ gint database_add_podcast_episode(Database *db, gint podcast_id, const gchar *gu
                                   const gchar *chapters_url, const gchar *chapters_type,
                                   const gchar *transcript_url, const gchar *transcript_type);
 GList* database_get_podcasts(Database *db);
+Podcast* database_get_podcast_by_id(Database *db, gint podcast_id);
 GList* database_get_podcast_episodes(Database *db, gint podcast_id);
 PodcastEpisode* database_get_episode_by_id(Database *db, gint episode_id);
 gboolean database_update_episode_progress(Database *db, gint episode_id, gint position, gboolean played);
@@ -79,6 +80,8 @@ gboolean database_update_episode_downloaded(Database *db, gint episode_id, const
 /* Funding operations */
 gboolean database_save_episode_funding(Database *db, gint episode_id, GList *funding_list);
 GList* database_get_episode_funding(Database *db, gint episode_id);
+gboolean database_save_podcast_funding(Database *db, gint podcast_id, GList *funding_list);
+GList* database_load_podcast_funding(Database *db, gint podcast_id);
 
 /* Preference operations */
 gboolean database_set_preference(Database *db, const gchar *key, const gchar *value);

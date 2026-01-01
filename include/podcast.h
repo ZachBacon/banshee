@@ -21,6 +21,7 @@ struct Podcast {
     gint64 last_updated;
     gint64 last_fetched;
     gboolean auto_download;
+    GList *funding;  /* List of PodcastFunding */
 };
 
 /* Episode structure with Podcast 2.0 features */

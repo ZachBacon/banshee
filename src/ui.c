@@ -357,7 +357,6 @@ static void on_funding_url_clicked(GtkWidget *button, gpointer user_data) {
         gchar *command = g_strdup_printf("xdg-open '%s'", url);
         g_spawn_command_line_async(command, NULL);
         g_free(command);
-        g_print("Opening funding URL: %s\n", url);
     }
 }
 
@@ -367,17 +366,11 @@ static void on_podcast_seek(gpointer user_data, gdouble time_seconds) {
     /* Convert seconds to nanoseconds (GStreamer uses nanoseconds) */
     gint64 position_ns = (gint64)(time_seconds * GST_SECOND);
     
-    g_print("Seeking to %.1f seconds (%" G_GINT64_FORMAT " ns)\n", time_seconds, position_ns);
-    
     /* Seek the player */
     if (ui->player) {
-        if (player_seek(ui->player, position_ns)) {
-            g_print("Seek successful\n");
-        } else {
-            g_print("Seek failed\n");
-        }
+        player_seek(ui->player, position_ns);
     } else {
-        g_print("Warning: No player available for seeking\n");
+        /* Warning: No player available for seeking */
     }
 }
 
@@ -401,15 +394,15 @@ static void on_podcast_episode_play(gpointer user_data, const gchar *uri, const 
     
     /* Episode buttons are now in podcast toolbar, not global UI */
     if (chapters && g_list_length(chapters) > 0) {
-        g_print("Episode has %d chapters - use toolbar button\n", g_list_length(chapters));
+        /* Episode has chapters - toolbar button will be active */
     }
     
     if (transcript_url && strlen(transcript_url) > 0) {
-        g_print("Episode has transcript - use toolbar button\n");
+        /* Episode has transcript - toolbar button will be active */
     }
     
     if (funding && g_list_length(funding) > 0) {
-        g_print("Episode has %d funding options - use toolbar button\n", g_list_length(funding));
+        /* Episode has funding options - toolbar button will be active */
     }
 }
 

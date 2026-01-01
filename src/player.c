@@ -25,13 +25,11 @@ static gboolean bus_callback(GstBus *bus, GstMessage *msg, gpointer data) {
             break;
         }
         case GST_MESSAGE_EOS:
-            g_print("End-Of-Stream reached.\n");
             player->state = PLAYER_STATE_STOPPED;
             break;
         case GST_MESSAGE_BUFFERING: {
             gint percent = 0;
             gst_message_parse_buffering(msg, &percent);
-            g_print("Buffering (%3d%%)\r", percent);
             
             /* Wait until buffering is complete before continuing playback */
             if (percent < 100 && player->state == PLAYER_STATE_PLAYING) {
@@ -170,7 +168,6 @@ gboolean player_set_uri(MediaPlayer *player, const gchar *uri) {
         g_object_get(player->playbin, "flags", &flags, NULL);
         flags |= 0x00000080;  /* GST_PLAY_FLAG_DOWNLOAD */
         g_object_set(player->playbin, "flags", flags, NULL);
-        g_print("Enabled progressive download for network stream\n");
     } else {
         /* For local files, disable buffering for immediate playback */
         g_object_set(player->playbin,

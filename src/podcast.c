@@ -118,10 +118,6 @@ PodcastManager* podcast_manager_new(Database *database) {
     /* Load existing podcasts from database */
     manager->podcasts = database_get_podcasts(database);
     
-    if (manager->podcasts) {
-        g_print("Loaded %d podcasts from database\n", g_list_length(manager->podcasts));
-    }
-    
     /* Create download directory */
     manager->download_dir = g_build_filename(g_get_user_data_dir(), "banshee", "podcasts", NULL);
     g_mkdir_with_parents(manager->download_dir, 0755);
@@ -164,6 +160,7 @@ void podcast_free(Podcast *podcast) {
     g_free(podcast->author);
     g_free(podcast->image_url);
     g_free(podcast->language);
+    g_list_free_full(podcast->funding, (GDestroyNotify)podcast_funding_free);
     g_free(podcast);
 }
 
@@ -366,6 +363,36 @@ Podcast* podcast_parse_feed(const gchar *feed_url) {
         image_node = image_node->next;
     }
     
+    /* Parse Podcast 2.0 funding tags at channel level */
+    xmlNodePtr funding_node = channel->children;
+    while (funding_node) {
+        if (funding_node->type == XML_ELEMENT_NODE && 
+            xmlStrcmp(funding_node->name, (const xmlChar *)"funding") == 0 &&
+            funding_node->ns && xmlStrcmp(funding_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
+            
+            PodcastFunding *funding = g_new0(PodcastFunding, 1);
+            
+            xmlChar *url = xmlGetProp(funding_node, (const xmlChar *)"url");
+            xmlChar *message = xmlNodeGetContent(funding_node);
+            
+            if (url) {
+                funding->url = g_strdup((gchar *)url);
+                xmlFree(url);
+            }
+            if (message) {
+                funding->message = g_strdup((gchar *)message);
+                xmlFree(message);
+            }
+            
+            if (funding->url) {
+                podcast->funding = g_list_append(podcast->funding, funding);
+            } else {
+                podcast_funding_free(funding);
+            }
+        }
+        funding_node = funding_node->next;
+    }
+    
     xmlFreeDoc(doc);
     return podcast;
 }
@@ -521,7 +548,6 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
                     if (url) {
                         episode->chapters_url = g_strdup((gchar *)url);
                         xmlFree(url);
-                        g_print("Found chapters URL: %s\n", episode->chapters_url);
                     }
                     if (type) {
                         episode->chapters_type = g_strdup((gchar *)type);
@@ -640,6 +666,11 @@ gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_ur
     podcast->id = podcast_id;
     manager->podcasts = g_list_append(manager->podcasts, podcast);
     
+    /* Save podcast funding information if available */
+    if (podcast->funding) {
+        database_save_podcast_funding(manager->database, podcast_id, podcast->funding);
+    }
+    
     /* Fetch and parse episodes */
     gchar *xml_data = fetch_url(feed_url);
     if (xml_data) {
@@ -697,6 +728,21 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
     }
     
     g_print("Updating podcast feed: %s\n", podcast->title);
+    
+    /* Re-parse podcast-level information (including funding) */
+    Podcast *updated_podcast = podcast_parse_feed(podcast->feed_url);
+    if (updated_podcast && updated_podcast->funding) {
+        database_save_podcast_funding(manager->database, podcast_id, updated_podcast->funding);
+        
+        /* Update the in-memory podcast funding */
+        if (podcast->funding) {
+            g_list_free_full(podcast->funding, (GDestroyNotify)podcast_funding_free);
+        }
+        podcast->funding = g_list_copy_deep(updated_podcast->funding, (GCopyFunc)podcast_funding_copy, NULL);
+    }
+    if (updated_podcast) {
+        podcast_free(updated_podcast);
+    }
     
     /* Fetch and parse episodes */
     gchar *xml_data = fetch_url(podcast->feed_url);
@@ -777,8 +823,6 @@ void podcast_manager_start_auto_update(PodcastManager *manager, gint interval_da
             podcast_update_timer_callback,
             manager
         );
-        
-        g_print("Podcast auto-update enabled: checking every %d day(s)\n", interval_days);
     }
 }
 
@@ -789,7 +833,6 @@ void podcast_manager_stop_auto_update(PodcastManager *manager) {
     if (manager->update_timer_id > 0) {
         g_source_remove(manager->update_timer_id);
         manager->update_timer_id = 0;
-        g_print("Podcast auto-update disabled\n");
     }
 }
 
@@ -1105,45 +1148,30 @@ GList* podcast_episode_get_chapters(PodcastManager *manager, gint episode_id) {
     /* Get episode details by ID */
     PodcastEpisode *episode = database_get_episode_by_id(manager->database, episode_id);
     if (!episode) {
-        g_print("Episode %d not found in database\n", episode_id);
         return NULL;
     }
-    
-    g_print("Episode %d: chapters_url='%s', chapters_type='%s'\n", 
-            episode_id, 
-            episode->chapters_url ? episode->chapters_url : "(null)",
-            episode->chapters_type ? episode->chapters_type : "(null)");
     
     GList *chapters = NULL;
     
     /* Try to fetch external chapters file */
     if (episode->chapters_url) {
-        g_print("Fetching chapters from: %s\n", episode->chapters_url);
         gchar *chapters_data = fetch_url(episode->chapters_url);
         if (chapters_data) {
-            g_print("Successfully fetched %zu bytes of chapter data\n", strlen(chapters_data));
             if (g_str_has_suffix(episode->chapters_url, ".json") || 
                 (episode->chapters_type && strstr(episode->chapters_type, "json"))) {
-                g_print("Parsing as JSON chapters...\n");
                 chapters = parse_chapters_json(chapters_data);
-                if (chapters) {
-                    g_print("Successfully parsed %d chapters\n", g_list_length(chapters));
-                } else {
-                    g_print("ERROR: Failed to parse chapters JSON\n");
-                }
             }
             g_free(chapters_data);
         } else {
-            g_print("ERROR: Failed to fetch chapters file\n");
+            /* Fetch failed */
         }
     } else {
-        g_print("Episode has no chapters_url\n");
+        /* Episode has no chapters_url */
     }
     
     /* If no external chapters, try to get from media file tags */
     if (!chapters && episode->local_file_path && g_file_test(episode->local_file_path, G_FILE_TEST_EXISTS)) {
         /* TODO: Extract embedded chapters from media file using GStreamer */
-        g_print("Checking for embedded chapters in: %s\n", episode->local_file_path);
     }
     
     podcast_episode_free(episode);

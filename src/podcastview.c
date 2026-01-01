@@ -8,6 +8,31 @@ static void on_support_button_clicked(GtkButton *button, gpointer user_data);
 static void on_chapter_seek(gpointer user_data, gdouble time);
 static void on_funding_url_clicked(GtkWidget *button, gpointer user_data);
 static void on_cancel_button_clicked(GtkButton *button, gpointer user_data);
+static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer user_data);
+
+/* Helper function to update support button text based on current funding */
+static void update_support_button_text(PodcastView *view) {
+    if (!view->support_button || !view->current_funding) return;
+    
+    /* Use the first funding entry's message as the button text */
+    PodcastFunding *funding = (PodcastFunding *)view->current_funding->data;
+    const gchar *button_text = "Support";
+    
+    if (funding && funding->message && strlen(funding->message) > 0) {
+        /* Truncate long messages for the button */
+        if (strlen(funding->message) > 20) {
+            gchar *truncated = g_strndup(funding->message, 17);
+            gchar *button_label = g_strdup_printf("%s...", truncated);
+            gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), button_label);
+            g_free(truncated);
+            g_free(button_label);
+        } else {
+            gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), funding->message);
+        }
+    } else {
+        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), button_text);
+    }
+}
 
 /* Download callbacks */
 static void on_download_progress(gpointer user_data, gint episode_id, gdouble progress, const gchar *status);
@@ -40,7 +65,105 @@ static void on_podcast_selection_changed(GtkTreeSelection *selection, gpointer u
         gtk_tree_model_get(model, &iter, PODCAST_COL_ID, &podcast_id, -1);
         
         view->selected_podcast_id = podcast_id;
+        
+        /* Load podcast funding information and enable/disable support button */
+        Podcast *podcast = database_get_podcast_by_id(view->database, podcast_id);
+        if (podcast && podcast->funding) {
+            /* Set current funding to podcast-level funding */
+            if (view->current_funding) {
+                g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+            }
+            view->current_funding = g_list_copy_deep(podcast->funding, (GCopyFunc)podcast_funding_copy, NULL);
+            gtk_widget_set_sensitive(view->support_button, TRUE);
+            update_support_button_text(view);
+        } else {
+            /* No podcast-level funding, disable support button for now */
+            if (view->current_funding) {
+                g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+                view->current_funding = NULL;
+            }
+            gtk_widget_set_sensitive(view->support_button, FALSE);
+            gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), "Support");
+        }
+        
+        if (podcast) {
+            podcast_free(podcast);
+        }
+        
         podcast_view_refresh_episodes(view, podcast_id);
+    }
+}
+
+static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    
+    GtkTreeModel *model;
+    GtkTreeIter iter;
+    
+    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+        gint episode_id;
+        gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
+        
+        /* Load episode and its funding information */
+        PodcastEpisode *episode = database_get_episode_by_id(view->database, episode_id);
+        if (episode && episode->funding) {
+            /* Episode has its own funding, use that instead of podcast-level funding */
+            if (view->current_funding) {
+                g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+            }
+            view->current_funding = g_list_copy_deep(episode->funding, (GCopyFunc)podcast_funding_copy, NULL);
+            gtk_widget_set_sensitive(view->support_button, TRUE);
+            update_support_button_text(view);
+        } else if (!view->current_funding || g_list_length(view->current_funding) == 0) {
+            /* No episode funding and no current podcast funding, check podcast funding */
+            if (view->selected_podcast_id > 0) {
+                Podcast *podcast = database_get_podcast_by_id(view->database, view->selected_podcast_id);
+                if (podcast && podcast->funding) {
+                    if (view->current_funding) {
+                        g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+                    }
+                    view->current_funding = g_list_copy_deep(podcast->funding, (GCopyFunc)podcast_funding_copy, NULL);
+                    gtk_widget_set_sensitive(view->support_button, TRUE);
+                    update_support_button_text(view);
+                }
+                if (podcast) {
+                    podcast_free(podcast);
+                }
+            }
+        }
+        
+        if (episode) {
+            podcast_episode_free(episode);
+        }
+        
+        /* Clear funding popover to force recreation with new funding data */
+        if (view->funding_popover) {
+            gtk_widget_destroy(view->funding_popover);
+            view->funding_popover = NULL;
+        }
+    } else {
+        /* No episode selected, revert to podcast-level funding if available */
+        if (view->selected_podcast_id > 0) {
+            Podcast *podcast = database_get_podcast_by_id(view->database, view->selected_podcast_id);
+            if (podcast && podcast->funding) {
+                if (view->current_funding) {
+                    g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+                }
+                view->current_funding = g_list_copy_deep(podcast->funding, (GCopyFunc)podcast_funding_copy, NULL);
+                gtk_widget_set_sensitive(view->support_button, TRUE);
+                update_support_button_text(view);
+            } else {
+                if (view->current_funding) {
+                    g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+                    view->current_funding = NULL;
+                }
+                gtk_widget_set_sensitive(view->support_button, FALSE);
+                gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), "Support");
+            }
+            if (podcast) {
+                podcast_free(podcast);
+            }
+        }
     }
 }
 
@@ -55,7 +178,6 @@ static void on_refresh_button_clicked(GtkButton *button, gpointer user_data) {
     (void)button;
     
     /* Update all podcast feeds from the internet */
-    g_print("Refreshing podcast feeds...\n");
     podcast_manager_update_all_feeds(view->podcast_manager);
     
     /* Refresh the UI */
@@ -332,13 +454,11 @@ static gboolean on_episode_query_tooltip(GtkWidget *widget, gint x, gint y,
 static void on_chapter_seek(gpointer user_data, gdouble time) {
     PodcastView *view = (PodcastView *)user_data;
     
-    g_print("Chapter seek requested: %.1f seconds\n", time);
-    
     /* Call the seek callback if registered */
     if (view->seek_callback) {
         view->seek_callback(view->seek_callback_data, time);
     } else {
-        g_print("Warning: No seek callback registered\n");
+        /* Warning: No seek callback registered */
     }
 }
 
@@ -401,7 +521,6 @@ static void on_funding_url_clicked(GtkWidget *button, gpointer user_data) {
         gchar *command = g_strdup_printf("xdg-open '%s'", url);
         g_spawn_command_line_async(command, NULL);
         g_free(command);
-        g_print("Opening funding URL: %s\n", url);
     }
 }
 
@@ -643,6 +762,10 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     /* Connect row-activated signal for double-click playback */
     g_signal_connect(view->episode_listview, "row-activated", G_CALLBACK(on_episode_row_activated), view);
     
+    /* Connect selection-changed signal to update episode features */
+    GtkTreeSelection *episode_selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->episode_listview));
+    g_signal_connect(episode_selection, "changed", G_CALLBACK(on_episode_selection_changed), view);
+    
     GtkWidget *episode_scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(episode_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(episode_scroll), view->episode_listview);
@@ -857,30 +980,14 @@ void podcast_view_play_episode(PodcastView *view, gint episode_id) {
             const gchar *uri = episode->downloaded && episode->local_file_path ? 
                               episode->local_file_path : episode->enclosure_url;
             
-            g_print("Playing episode: %s from %s\n", episode->title, uri);
-            
             /* Load chapters if available */
             GList *chapters = NULL;
-            g_print("Checking for chapters: chapters_url='%s', enclosure_url='%s'\n",
-                    episode->chapters_url ? episode->chapters_url : "(null)",
-                    episode->enclosure_url ? episode->enclosure_url : "(null)");
             if (episode->chapters_url || episode->enclosure_url) {
-                g_print("Calling podcast_episode_get_chapters for episode %d\n", episode_id);
                 chapters = podcast_episode_get_chapters(view->podcast_manager, episode_id);
-                if (chapters) {
-                    g_print("Loaded %d chapters for episode\n", g_list_length(chapters));
-                } else {
-                    g_print("podcast_episode_get_chapters returned NULL\n");
-                }
-            } else {
-                g_print("No chapters_url or enclosure_url found for episode\n");
             }
             
             /* Load funding from database */
             GList *funding = database_get_episode_funding(view->database, episode_id);
-            if (funding) {
-                g_print("Loaded %d funding options for episode\n", g_list_length(funding));
-            }
             
             /* Call playback callback if set */
             if (view->play_callback) {
@@ -917,8 +1024,6 @@ void podcast_view_download_episode(PodcastView *view, gint episode_id) {
         PodcastEpisode *episode = (PodcastEpisode *)l->data;
         if (episode->id == episode_id) {
             if (!episode->downloaded) {
-                g_print("Downloading episode: %s\n", episode->title);
-                
                 /* Store current download ID */
                 view->current_download_id = episode_id;
                 
@@ -940,7 +1045,7 @@ void podcast_view_download_episode(PodcastView *view, gint episode_id) {
                 podcast_episode_download(view->podcast_manager, episode_copy, 
                                        on_download_progress, on_download_complete, view);
             } else {
-                g_print("Episode already downloaded: %s\n", episode->local_file_path);
+                /* Episode already downloaded */
             }
             break;
         }
@@ -1074,8 +1179,10 @@ void podcast_view_update_episode_features(PodcastView *view, GList *chapters, co
     if (funding) {
         view->current_funding = g_list_copy_deep(funding, (GCopyFunc)podcast_funding_copy, NULL);
         gtk_widget_set_sensitive(view->support_button, TRUE);
+        update_support_button_text(view);
     } else {
         gtk_widget_set_sensitive(view->support_button, FALSE);
+        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), "Support");
     }
 }
 
