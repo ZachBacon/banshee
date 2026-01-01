@@ -358,8 +358,14 @@ Track* database_get_track(Database *db, gint track_id) {
 GList* database_get_all_tracks(Database *db) {
     if (!db || !db->db) return NULL;
     
+    /* Get only audio files from tracks table (positive filter for audio extensions) */
     const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
-                      "FROM tracks ORDER BY title;";
+                      "FROM tracks WHERE "
+                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+                      "LOWER(file_path) LIKE '%.mpc' "
+                      "ORDER BY title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -380,6 +386,7 @@ GList* database_get_all_tracks(Database *db) {
         track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
         track->play_count = sqlite3_column_int(stmt, 7);
         track->date_added = sqlite3_column_int64(stmt, 8);
+        
         tracks = g_list_append(tracks, track);
     }
     
@@ -387,11 +394,40 @@ GList* database_get_all_tracks(Database *db) {
     return tracks;
 }
 
+gint database_get_audio_track_count(Database *db) {
+    if (!db || !db->db) return 0;
+    
+    const char *sql = "SELECT COUNT(*) FROM tracks WHERE "
+                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+                      "LOWER(file_path) LIKE '%.mpc';";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        return 0;
+    }
+    
+    gint count = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        count = sqlite3_column_int(stmt, 0);
+    }
+    
+    sqlite3_finalize(stmt);
+    return count;
+}
+
 GList* database_get_tracks_by_artist(Database *db, const gchar *artist) {
     if (!db || !db->db || !artist) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
-                      "FROM tracks WHERE artist = ? ORDER BY album, title;";
+                      "FROM tracks WHERE artist = ? AND ("
+                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+                      "LOWER(file_path) LIKE '%.mpc') ORDER BY album, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -426,9 +462,17 @@ GList* database_get_tracks_by_album(Database *db, const gchar *artist, const gch
     
     const char *sql = artist ? 
         "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
-        "FROM tracks WHERE artist = ? AND album = ? ORDER BY title;" :
+        "FROM tracks WHERE artist = ? AND album = ? AND ("
+        "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+        "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+        "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+        "LOWER(file_path) LIKE '%.mpc') ORDER BY title;" :
         "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
-        "FROM tracks WHERE album = ? ORDER BY title;";
+        "FROM tracks WHERE album = ? AND ("
+        "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+        "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+        "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+        "LOWER(file_path) LIKE '%.mpc') ORDER BY title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -472,8 +516,18 @@ GList* database_get_albums_by_artist(Database *db, const gchar *artist) {
     if (!db || !db->db) return NULL;
     
     const char *sql = artist ? 
-        "SELECT DISTINCT artist, album FROM tracks WHERE artist = ? AND album IS NOT NULL AND album != '' ORDER BY album;" :
-        "SELECT DISTINCT artist, album FROM tracks WHERE album IS NOT NULL AND album != '' ORDER BY artist, album;";
+        "SELECT DISTINCT artist, album FROM tracks WHERE artist = ? AND album IS NOT NULL AND album != '' AND ("
+        "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
+        "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
+        "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+        "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
+        "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY album;" :
+        "SELECT DISTINCT artist, album FROM tracks WHERE album IS NOT NULL AND album != '' AND ("
+        "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
+        "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
+        "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+        "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
+        "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY artist, album;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -549,7 +603,12 @@ GList* database_search_tracks(Database *db, const gchar *search_term) {
     if (!db || !db->db || !search_term) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
-                      "FROM tracks WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? ORDER BY title;";
+                      "FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?) AND ("
+                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
+                      "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
+                      "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
+                      "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -581,6 +640,94 @@ GList* database_search_tracks(Database *db, const gchar *search_term) {
     
     sqlite3_finalize(stmt);
     return tracks;
+}
+
+/* Video operations */
+GList* database_get_all_videos(Database *db) {
+    if (!db || !db->db) return NULL;
+    
+    /* Get all files and filter by video extensions (case-insensitive) */
+    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+                      "FROM tracks WHERE "
+                      "LOWER(file_path) LIKE '%.mp4' OR LOWER(file_path) LIKE '%.mkv' OR LOWER(file_path) LIKE '%.avi' OR "
+                      "LOWER(file_path) LIKE '%.mov' OR LOWER(file_path) LIKE '%.wmv' OR LOWER(file_path) LIKE '%.flv' OR "
+                      "LOWER(file_path) LIKE '%.webm' OR LOWER(file_path) LIKE '%.m4v' OR LOWER(file_path) LIKE '%.mpg' OR "
+                      "LOWER(file_path) LIKE '%.mpeg' OR LOWER(file_path) LIKE '%.3gp' OR LOWER(file_path) LIKE '%.ogv' OR "
+                      "LOWER(file_path) LIKE '%.ts' OR LOWER(file_path) LIKE '%.m2ts' OR LOWER(file_path) LIKE '%.vob' OR "
+                      "LOWER(file_path) LIKE '%.divx' OR LOWER(file_path) LIKE '%.xvid' OR LOWER(file_path) LIKE '%.asf' OR "
+                      "LOWER(file_path) LIKE '%.rm' OR LOWER(file_path) LIKE '%.rmvb' "
+                      "ORDER BY title;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        return NULL;
+    }
+    
+    GList *videos = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Track *video = g_new0(Track, 1);
+        video->id = sqlite3_column_int(stmt, 0);
+        video->title = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
+        video->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        video->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
+        video->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
+        video->duration = sqlite3_column_int(stmt, 5);
+        video->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
+        video->play_count = sqlite3_column_int(stmt, 7);
+        video->date_added = sqlite3_column_int64(stmt, 8);
+        videos = g_list_append(videos, video);
+    }
+    
+    sqlite3_finalize(stmt);
+    return videos;
+}
+
+GList* database_search_videos(Database *db, const gchar *search_term) {
+    if (!db || !db->db || !search_term) return NULL;
+    
+    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+                      "FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?) AND ("
+                      "file_path LIKE '%.mp4' OR file_path LIKE '%.mkv' OR file_path LIKE '%.avi' OR "
+                      "file_path LIKE '%.mov' OR file_path LIKE '%.wmv' OR file_path LIKE '%.flv' OR "
+                      "file_path LIKE '%.webm' OR file_path LIKE '%.m4v' OR file_path LIKE '%.mpg' OR "
+                      "file_path LIKE '%.mpeg' OR file_path LIKE '%.3gp' OR file_path LIKE '%.ogv' OR "
+                      "file_path LIKE '%.ts' OR file_path LIKE '%.m2ts' OR file_path LIKE '%.vob' OR "
+                      "file_path LIKE '%.divx' OR file_path LIKE '%.xvid' OR file_path LIKE '%.asf' OR "
+                      "file_path LIKE '%.rm' OR file_path LIKE '%.rmvb'"
+                      ") ORDER BY title;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        return NULL;
+    }
+    
+    gchar *pattern = g_strdup_printf("%%%s%%", search_term);
+    sqlite3_bind_text(stmt, 1, pattern, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, pattern, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, pattern, -1, SQLITE_TRANSIENT);
+    g_free(pattern);
+    
+    GList *videos = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Track *video = g_new0(Track, 1);
+        video->id = sqlite3_column_int(stmt, 0);
+        video->title = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
+        video->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        video->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
+        video->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
+        video->duration = sqlite3_column_int(stmt, 5);
+        video->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
+        video->play_count = sqlite3_column_int(stmt, 7);
+        video->date_added = sqlite3_column_int64(stmt, 8);
+        videos = g_list_append(videos, video);
+    }
+    
+    sqlite3_finalize(stmt);
+    return videos;
 }
 
 gint database_create_playlist(Database *db, const gchar *name) {
@@ -675,7 +822,11 @@ GList* database_get_playlist_tracks(Database *db, gint playlist_id) {
                       "t.file_path, t.play_count, t.date_added "
                       "FROM tracks t "
                       "JOIN playlist_tracks pt ON t.id = pt.track_id "
-                      "WHERE pt.playlist_id = ? "
+                      "WHERE pt.playlist_id = ? AND ("
+                      "LOWER(t.file_path) LIKE '%.mp3' OR LOWER(t.file_path) LIKE '%.ogg' OR LOWER(t.file_path) LIKE '%.flac' OR "
+                      "LOWER(t.file_path) LIKE '%.wav' OR LOWER(t.file_path) LIKE '%.m4a' OR LOWER(t.file_path) LIKE '%.aac' OR "
+                      "LOWER(t.file_path) LIKE '%.opus' OR LOWER(t.file_path) LIKE '%.wma' OR LOWER(t.file_path) LIKE '%.ape' OR "
+                      "LOWER(t.file_path) LIKE '%.mpc') "
                       "ORDER BY pt.position;";
     
     sqlite3_stmt *stmt;
@@ -756,7 +907,11 @@ GList* database_get_most_played_tracks(Database *db, gint limit) {
     if (!db || !db->db) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
-                      "FROM tracks WHERE play_count > 0 ORDER BY play_count DESC LIMIT ?;";
+                      "FROM tracks WHERE play_count > 0 AND ("
+                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+                      "LOWER(file_path) LIKE '%.mpc') ORDER BY play_count DESC LIMIT ?;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -790,7 +945,11 @@ GList* database_get_recent_tracks(Database *db, gint limit) {
     if (!db || !db->db) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
-                      "FROM tracks ORDER BY date_added DESC LIMIT ?;";
+                      "FROM tracks WHERE "
+                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+                      "LOWER(file_path) LIKE '%.mpc' ORDER BY date_added DESC LIMIT ?;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);

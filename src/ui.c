@@ -6,6 +6,7 @@
 #include "radio.h"
 #include "import.h"
 #include "albumview.h"
+#include "videoview.h"
 #include <string.h>
 
 enum {
@@ -30,6 +31,8 @@ static void ui_internal_update_track_list(MediaPlayerUI *ui);
 static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks);
 static void ui_show_radio_stations(MediaPlayerUI *ui);
 static void on_import_media_clicked(GtkMenuItem *item, gpointer user_data);
+static void on_import_audio_clicked(GtkMenuItem *item, gpointer user_data);
+static void on_import_video_clicked(GtkMenuItem *item, gpointer user_data);
 static void on_search_changed(GtkSearchEntry *entry, gpointer user_data);
 static void on_preferences_clicked(GtkMenuItem *item, gpointer user_data);
 static void ui_update_cover_art(MediaPlayerUI *ui, const gchar *artist, const gchar *album, const gchar *podcast_image_url);
@@ -56,16 +59,19 @@ static GtkWidget* create_hamburger_menu(MediaPlayerUI *ui) {
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), new_smart_playlist_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
     
-    GtkWidget *import_item = gtk_menu_item_new_with_label("Import Media...");
+    GtkWidget *import_item = gtk_menu_item_new_with_label("Import Audio...");
+    GtkWidget *import_video_item = gtk_menu_item_new_with_label("Import Video...");
     GtkWidget *import_playlist_item = gtk_menu_item_new_with_label("Import Playlist...");
     GtkWidget *open_location_item = gtk_menu_item_new_with_label("Open Location...");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), import_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), import_video_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), import_playlist_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), open_location_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
     
-    /* Connect import handler */
-    g_signal_connect(import_item, "activate", G_CALLBACK(on_import_media_clicked), ui);
+    /* Connect import handlers */
+    g_signal_connect(import_item, "activate", G_CALLBACK(on_import_audio_clicked), ui);
+    g_signal_connect(import_video_item, "activate", G_CALLBACK(on_import_video_clicked), ui);
     
     GtkWidget *add_station_item = gtk_menu_item_new_with_label("Add Station");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), add_station_item);
@@ -152,6 +158,11 @@ static void on_import_media_clicked(GtkMenuItem *item, gpointer user_data) {
         /* Refresh the track list and album view */
         ui_internal_update_track_list(ui);
         
+        /* Refresh browser models */
+        if (ui->artist_model) {
+            browser_model_reload(ui->artist_model);
+        }
+        
         /* Refresh album view if an artist is selected */
         GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->artist_browser));
         GtkTreeModel *model;
@@ -163,6 +174,201 @@ static void on_import_media_clicked(GtkMenuItem *item, gpointer user_data) {
                 album_view_set_artist(ui->album_view, artist);
                 g_free(artist);
             }
+        }
+        
+        /* Refresh video view */
+        if (ui->video_view) {
+            video_view_load_videos(ui->video_view);
+        }
+        
+        /* Update source counts */
+        if (ui->source_manager) {
+            /* Find and update Music and Video library counts */
+            for (GList *l = ui->source_manager->sources; l != NULL; l = l->next) {
+                Source *source = (Source *)l->data;
+                if (source && source->type == SOURCE_TYPE_LIBRARY) {
+                    if (source->media_types & MEDIA_TYPE_AUDIO) {
+                        GList *tracks = database_get_all_tracks(ui->database);
+                        source->count = g_list_length(tracks);
+                        g_list_free_full(tracks, (GDestroyNotify)database_free_track);
+                    } else if (source->media_types & MEDIA_TYPE_VIDEO) {
+                        GList *videos = database_get_all_videos(ui->database);
+                        source->count = g_list_length(videos);
+                        g_list_free_full(videos, (GDestroyNotify)database_free_track);
+                    }
+                }
+            }
+            source_manager_populate(ui->source_manager);
+        }
+    } else {
+        gtk_widget_destroy(dialog);
+    }
+}
+
+static void on_import_audio_clicked(GtkMenuItem *item, gpointer user_data) {
+    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
+    (void)item;
+    
+    GtkWidget *dialog = gtk_file_chooser_dialog_new(
+        "Select Audio Folder",
+        GTK_WINDOW(ui->window),
+        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Open", GTK_RESPONSE_ACCEPT,
+        NULL);
+    
+    /* Set default to Music folder */
+    const gchar *home = g_get_home_dir();
+    gchar *music_dir = g_build_filename(home, "Music", NULL);
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dialog), music_dir);
+    g_free(music_dir);
+    
+    gint result = gtk_dialog_run(GTK_DIALOG(dialog));
+    if (result == GTK_RESPONSE_ACCEPT) {
+        gchar *folder = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        gtk_widget_destroy(dialog);
+        
+        /* Show progress window */
+        GtkWidget *progress_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        gtk_window_set_title(GTK_WINDOW(progress_window), "Importing Audio Files");
+        gtk_window_set_transient_for(GTK_WINDOW(progress_window), GTK_WINDOW(ui->window));
+        gtk_window_set_modal(GTK_WINDOW(progress_window), TRUE);
+        gtk_window_set_default_size(GTK_WINDOW(progress_window), 400, 100);
+        gtk_container_set_border_width(GTK_CONTAINER(progress_window), 20);
+        
+        GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+        gtk_container_add(GTK_CONTAINER(progress_window), vbox);
+        
+        GtkWidget *label = gtk_label_new("Scanning for audio files...");
+        gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 0);
+        
+        GtkWidget *spinner = gtk_spinner_new();
+        gtk_spinner_start(GTK_SPINNER(spinner));
+        gtk_box_pack_start(GTK_BOX(vbox), spinner, FALSE, FALSE, 0);
+        
+        gtk_widget_show_all(progress_window);
+        
+        /* Process events to show the window */
+        while (gtk_events_pending()) {
+            gtk_main_iteration();
+        }
+        
+        /* Import audio files and extract cover art */
+        import_audio_from_directory_with_covers(folder, ui->database, ui->coverart_manager);
+        
+        g_free(folder);
+        gtk_widget_destroy(progress_window);
+        
+        /* Refresh the track list and album view */
+        ui_internal_update_track_list(ui);
+        
+        /* Refresh browser models */
+        if (ui->artist_model) {
+            browser_model_reload(ui->artist_model);
+        }
+        
+        /* Refresh album view if an artist is selected */
+        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->artist_browser));
+        GtkTreeModel *model;
+        GtkTreeIter iter;
+        if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+            gchar *artist;
+            gtk_tree_model_get(model, &iter, 0, &artist, -1);
+            if (artist) {
+                album_view_set_artist(ui->album_view, artist);
+                g_free(artist);
+            }
+        }
+        
+        /* Update source counts */
+        if (ui->source_manager) {
+            /* Find and update Music library count */
+            for (GList *l = ui->source_manager->sources; l != NULL; l = l->next) {
+                Source *source = (Source *)l->data;
+                if (source && source->type == SOURCE_TYPE_LIBRARY && (source->media_types & MEDIA_TYPE_AUDIO)) {
+                    GList *tracks = database_get_all_tracks(ui->database);
+                    source->count = g_list_length(tracks);
+                    g_list_free_full(tracks, (GDestroyNotify)database_free_track);
+                }
+            }
+            source_manager_populate(ui->source_manager);
+        }
+    } else {
+        gtk_widget_destroy(dialog);
+    }
+}
+
+static void on_import_video_clicked(GtkMenuItem *item, gpointer user_data) {
+    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
+    (void)item;
+    
+    GtkWidget *dialog = gtk_file_chooser_dialog_new(
+        "Select Video Folder",
+        GTK_WINDOW(ui->window),
+        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Open", GTK_RESPONSE_ACCEPT,
+        NULL);
+    
+    /* Set default to Videos folder */
+    const gchar *home = g_get_home_dir();
+    gchar *video_dir = g_build_filename(home, "Videos", NULL);
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dialog), video_dir);
+    g_free(video_dir);
+    
+    gint result = gtk_dialog_run(GTK_DIALOG(dialog));
+    if (result == GTK_RESPONSE_ACCEPT) {
+        gchar *folder = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        gtk_widget_destroy(dialog);
+        
+        /* Show progress window */
+        GtkWidget *progress_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        gtk_window_set_title(GTK_WINDOW(progress_window), "Importing Video Files");
+        gtk_window_set_transient_for(GTK_WINDOW(progress_window), GTK_WINDOW(ui->window));
+        gtk_window_set_modal(GTK_WINDOW(progress_window), TRUE);
+        gtk_window_set_default_size(GTK_WINDOW(progress_window), 400, 100);
+        gtk_container_set_border_width(GTK_CONTAINER(progress_window), 20);
+        
+        GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+        gtk_container_add(GTK_CONTAINER(progress_window), vbox);
+        
+        GtkWidget *label = gtk_label_new("Scanning for video files...");
+        gtk_box_pack_start(GTK_BOX(vbox), label, FALSE, FALSE, 0);
+        
+        GtkWidget *spinner = gtk_spinner_new();
+        gtk_spinner_start(GTK_SPINNER(spinner));
+        gtk_box_pack_start(GTK_BOX(vbox), spinner, FALSE, FALSE, 0);
+        
+        gtk_widget_show_all(progress_window);
+        
+        /* Process events to show the window */
+        while (gtk_events_pending()) {
+            gtk_main_iteration();
+        }
+        
+        /* Import video files */
+        import_video_from_directory_with_covers(folder, ui->database, ui->coverart_manager);
+        
+        g_free(folder);
+        gtk_widget_destroy(progress_window);
+        
+        /* Refresh video view */
+        if (ui->video_view) {
+            video_view_load_videos(ui->video_view);
+        }
+        
+        /* Update source counts */
+        if (ui->source_manager) {
+            /* Find and update Video library count */
+            for (GList *l = ui->source_manager->sources; l != NULL; l = l->next) {
+                Source *source = (Source *)l->data;
+                if (source && source->type == SOURCE_TYPE_LIBRARY && (source->media_types & MEDIA_TYPE_VIDEO)) {
+                    GList *videos = database_get_all_videos(ui->database);
+                    source->count = g_list_length(videos);
+                    g_list_free_full(videos, (GDestroyNotify)database_free_track);
+                }
+            }
+            source_manager_populate(ui->source_manager);
         }
     } else {
         gtk_widget_destroy(dialog);
@@ -598,11 +804,10 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search library...");
                     
                     if (source->media_types & MEDIA_TYPE_VIDEO) {
-                        /* Video library - no browsers, just video list */
-                        gtk_widget_hide(ui->browser_container);
-                        gtk_widget_hide(ui->album_container);
-                        /* For now, show empty since we don't have video support yet */
-                        /* In future: ui_internal_update_video_list(ui); */
+                        /* Video library - switch to video view */
+                        gtk_stack_set_visible_child_name(content_stack, "video");
+                        gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search videos...");
+                        video_view_load_videos(ui->video_view);
                     } else {
                         /* Music library with artist browser and album view */
                         gtk_widget_show(ui->browser_container);
@@ -761,6 +966,9 @@ MediaPlayerUI* ui_new(MediaPlayer *player, Database *database) {
     /* Initialize podcast view */
     ui->podcast_view = podcast_view_new(ui->podcast_manager, ui->database);
     
+    /* Initialize video view */
+    ui->video_view = video_view_new(ui->database, ui->player);
+    
     /* Create main horizontal paned (sidebar | content) */
     ui->main_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_paned_set_position(GTK_PANED(ui->main_paned), 180);
@@ -775,10 +983,14 @@ MediaPlayerUI* ui_new(MediaPlayer *player, Database *database) {
     gtk_stack_set_transition_duration(GTK_STACK(content_stack), 150);
     gtk_paned_pack2(GTK_PANED(ui->main_paned), content_stack, TRUE, TRUE);
     
+    /* Create overlay container for music view (allows video to paint over playlist) */
+    GtkWidget *music_overlay = gtk_overlay_new();
+    gtk_stack_add_named(GTK_STACK(content_stack), music_overlay, "music");
+    
     /* Create outer vertical paned for music library: top for browsers/albums, bottom for track list */
     GtkWidget *outer_vpaned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
     gtk_paned_set_position(GTK_PANED(outer_vpaned), 250);
-    gtk_stack_add_named(GTK_STACK(content_stack), outer_vpaned, "music");
+    gtk_container_add(GTK_CONTAINER(music_overlay), outer_vpaned);
     
     /* Create horizontal paned for artist browser and album view */
     ui->content_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
@@ -797,6 +1009,11 @@ MediaPlayerUI* ui_new(MediaPlayer *player, Database *database) {
     
     /* Add podcast view to stack */
     gtk_stack_add_named(GTK_STACK(content_stack), podcast_view_get_widget(ui->podcast_view), "podcast");
+    
+    /* Add video view to stack */
+    gtk_stack_add_named(GTK_STACK(content_stack), video_view_get_widget(ui->video_view), "video");
+    
+    /* Video view now manages its own internal overlay and stack */
     
     /* Store content stack reference for switching views */
     g_object_set_data(G_OBJECT(ui->window), "content_stack", content_stack);
@@ -996,6 +1213,11 @@ void ui_on_stop_clicked(GtkWidget *widget, gpointer user_data) {
     (void)widget;
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
     player_stop(ui->player);
+    
+    /* Hide video overlay if video is playing */
+    if (ui->video_view && video_view_is_showing_video(ui->video_view)) {
+        video_view_hide_video(ui->video_view);
+    }
 }
 
 void ui_on_prev_clicked(GtkWidget *widget, gpointer user_data) {
@@ -1068,6 +1290,11 @@ void ui_free(MediaPlayerUI *ui) {
     /* Free podcast manager */
     if (ui->podcast_manager) {
         podcast_manager_free(ui->podcast_manager);
+    }
+    
+    /* Free video view */
+    if (ui->video_view) {
+        video_view_free(ui->video_view);
     }
     
     if (ui->source_manager) {

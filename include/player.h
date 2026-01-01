@@ -2,6 +2,8 @@
 #define PLAYER_H
 
 #include <gst/gst.h>
+#include <gst/video/videooverlay.h>
+#include <gtk/gtk.h>
 #include <glib.h>
 
 typedef enum {
@@ -15,12 +17,17 @@ typedef enum {
 typedef struct {
     GstElement *pipeline;
     GstElement *playbin;
+    GstElement *video_sink;  /* Store the video sink for widget extraction */
     GstBus *bus;
     PlayerState state;
     gchar *current_uri;
     gdouble volume;
     gint64 duration;
     gint64 position;
+    GThread *bus_thread;
+    GMainLoop *bus_loop;
+    GMainContext *bus_context;
+    guint position_timer_id;  /* Timer running in GStreamer context */
 } MediaPlayer;
 
 /* Player initialization and cleanup */
@@ -45,6 +52,14 @@ PlayerState player_get_state(MediaPlayer *player);
 
 /* Event handling */
 typedef void (*PlayerStateCallback)(MediaPlayer *player, PlayerState state, gpointer user_data);
+typedef void (*PlayerPositionCallback)(MediaPlayer *player, gint64 position, gint64 duration, gpointer user_data);
 void player_set_state_callback(MediaPlayer *player, PlayerStateCallback callback, gpointer user_data);
+void player_set_position_callback(MediaPlayer *player, PlayerPositionCallback callback, gpointer user_data);
+
+/* Video support */
+void player_set_video_window(MediaPlayer *player, guintptr window_handle);
+gboolean player_has_video(MediaPlayer *player);
+GtkWidget* player_get_video_widget(MediaPlayer *player);  /* For gtksink */
+void player_set_video_widget_ready_callback(MediaPlayer *player, GCallback callback, gpointer user_data);
 
 #endif /* PLAYER_H */

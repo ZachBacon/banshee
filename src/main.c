@@ -15,7 +15,29 @@ typedef struct {
     MediaPlayerUI *ui;
     PlaylistManager *playlist_manager;
     guint update_timer_id;
+    gboolean video_playing;  /* Flag to disable timer during video playback */
 } Application;
+
+/* Forward declaration */
+static gboolean update_position(gpointer user_data);
+static void on_video_position_update(MediaPlayer *player, gint64 position, gint64 duration, gpointer user_data);
+
+/* Global app pointer for video view to access */
+static Application *g_app = NULL;
+
+void app_set_video_playing(gboolean playing) {
+    if (!g_app) return;
+    g_app->video_playing = playing;
+    /* Position updates now run in GStreamer thread, no GTK timer to manage */
+}
+
+static void on_video_position_update(MediaPlayer *player, gint64 position, gint64 duration, gpointer user_data) {
+    (void)player;  /* Unused */
+    Application *app = (Application *)user_data;
+    if (app && app->ui) {
+        ui_update_position(app->ui, position, duration);
+    }
+}
 
 static gboolean update_position(gpointer user_data) {
     Application *app = (Application *)user_data;
@@ -26,7 +48,7 @@ static gboolean update_position(gpointer user_data) {
         ui_update_position(app->ui, position, duration);
     }
     
-    return TRUE; /* Continue calling */
+    return G_SOURCE_CONTINUE;  /* Continue calling */
 }
 
 static void cleanup_application(Application *app) {
@@ -105,12 +127,12 @@ static Application* init_application(void) {
         return NULL;
     }
     
-    /* Load all tracks and update UI */
+    /* Load tracks and update UI */
     GList *tracks = database_get_all_tracks(app->database);
     ui_update_track_list(app->ui, tracks);
     
-    /* Set up position update timer (updates every 500ms) */
-    app->update_timer_id = g_timeout_add(500, update_position, app);
+    /* Position updates now run in GStreamer's own thread - no GTK timer needed */
+    app->video_playing = FALSE;  /* Initialize video flag */
     
     return app;
 }
@@ -124,6 +146,8 @@ int main(int argc, char *argv[]) {
     if (!app) {
         return 1;
     }
+    
+    g_app = app;  /* Set global pointer for video view access */
     
     g_print("%s v%s\n", APP_NAME, VERSION);
     

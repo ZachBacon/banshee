@@ -61,6 +61,7 @@ SourceManager* source_manager_new(Database *database);
 void source_manager_free(SourceManager *manager);
 void source_manager_add_source(SourceManager *manager, Source *source);
 void source_manager_remove_source(SourceManager *manager, Source *source);
+void source_manager_populate(SourceManager *manager);
 Source* source_manager_get_active(SourceManager *manager);
 void source_manager_set_active(SourceManager *manager, Source *source);
 GtkTreeStore* source_manager_get_tree_store(SourceManager *manager);

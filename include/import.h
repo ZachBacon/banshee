@@ -10,4 +10,10 @@ void import_media_from_directory(const gchar *directory, Database *db);
 /* Import media files and extract cover art */
 void import_media_from_directory_with_covers(const gchar *directory, Database *db, CoverArtManager *cover_mgr);
 
+/* Import audio files only */
+void import_audio_from_directory_with_covers(const gchar *directory, Database *db, CoverArtManager *cover_mgr);
+
+/* Import video files only */
+void import_video_from_directory_with_covers(const gchar *directory, Database *db, CoverArtManager *cover_mgr);
+
 #endif /* IMPORT_H */

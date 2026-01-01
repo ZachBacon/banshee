@@ -5,7 +5,7 @@ LDFLAGS =
 
 # Package config for dependencies
 PKG_CONFIG = pkg-config
-PACKAGES = gtk+-3.0 gstreamer-1.0 gstreamer-pbutils-1.0 gstreamer-tag-1.0 glib-2.0 sqlite3 libxml-2.0 libcurl json-glib-1.0
+PACKAGES = gtk+-3.0 gstreamer-1.0 gstreamer-video-1.0 gstreamer-pbutils-1.0 gstreamer-tag-1.0 glib-2.0 sqlite3 libxml-2.0 libcurl json-glib-1.0
 
 # Get flags from pkg-config
 CFLAGS += $(shell $(PKG_CONFIG) --cflags $(PACKAGES))

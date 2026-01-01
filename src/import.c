@@ -1,21 +1,24 @@
 #include "database.h"
 #include "coverart.h"
 #include <gst/gst.h>
+#include <gst/pbutils/pbutils.h>
 #include <gio/gio.h>
 #include <gtk/gtk.h>
 #include <stdio.h>
 #include <string.h>
 
 static gboolean is_audio_file(const gchar *filename) {
-    const gchar *extensions[] = {
-        ".mp3", ".ogg", ".flac", ".wav", ".m4a", ".aac", ".opus", ".wma", NULL
+    /* Check audio extensions only */
+    const gchar *audio_extensions[] = {
+        ".mp3", ".ogg", ".flac", ".wav", ".m4a", ".aac", ".opus", ".wma", ".ape", ".mpc",
+        NULL
     };
     
     gchar *lower = g_ascii_strdown(filename, -1);
     gboolean is_audio = FALSE;
     
-    for (int i = 0; extensions[i] != NULL; i++) {
-        if (g_str_has_suffix(lower, extensions[i])) {
+    for (int i = 0; audio_extensions[i] != NULL; i++) {
+        if (g_str_has_suffix(lower, audio_extensions[i])) {
             is_audio = TRUE;
             break;
         }
@@ -23,6 +26,53 @@ static gboolean is_audio_file(const gchar *filename) {
     
     g_free(lower);
     return is_audio;
+}
+
+static gboolean is_video_file(const gchar *filename) {
+    /* Check video extensions only */
+    const gchar *video_extensions[] = {
+        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg",
+        ".3gp", ".ogv", ".ts", ".m2ts", ".vob", ".divx", ".xvid", ".asf", ".rm", ".rmvb",
+        NULL
+    };
+    
+    gchar *lower = g_ascii_strdown(filename, -1);
+    gboolean is_video = FALSE;
+    
+    for (int i = 0; video_extensions[i] != NULL; i++) {
+        if (g_str_has_suffix(lower, video_extensions[i])) {
+            is_video = TRUE;
+            break;
+        }
+    }
+    
+    g_free(lower);
+    return is_video;
+}
+
+static gboolean is_media_file(const gchar *filename) {
+    /* Check all media extensions */
+    const gchar *extensions[] = {
+        /* Audio formats */
+        ".mp3", ".ogg", ".flac", ".wav", ".m4a", ".aac", ".opus", ".wma", ".ape", ".mpc",
+        /* Video formats */
+        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg",
+        ".3gp", ".ogv", ".ts", ".m2ts", ".vob", ".divx", ".xvid", ".asf", ".rm", ".rmvb",
+        NULL
+    };
+    
+    gchar *lower = g_ascii_strdown(filename, -1);
+    gboolean is_media = FALSE;
+    
+    for (int i = 0; extensions[i] != NULL; i++) {
+        if (g_str_has_suffix(lower, extensions[i])) {
+            is_media = TRUE;
+            break;
+        }
+    }
+    
+    g_free(lower);
+    return is_media;
 }
 
 static void extract_tags_from_file(const gchar *filepath, Track *track) {
@@ -96,7 +146,7 @@ static void scan_directory_recursive(const gchar *path, Database *db, CoverArtMa
         
         if (g_file_test(fullpath, G_FILE_TEST_IS_DIR)) {
             scan_directory_recursive(fullpath, db, cover_mgr, count);
-        } else if (is_audio_file(name)) {
+        } else if (is_media_file(name)) {
             Track *track = g_new0(Track, 1);
             track->file_path = g_strdup(fullpath);
             
@@ -118,7 +168,7 @@ static void scan_directory_recursive(const gchar *path, Database *db, CoverArtMa
                 coverart_extract_and_cache(cover_mgr, fullpath, track->artist, track->album);
             }
             
-            /* Add to database */
+            /* Add to database - all media files go to tracks table for consistency */
             if (database_add_track(db, track) > 0) {
                 (*count)++;
                 if (*count % 10 == 0) {
@@ -157,4 +207,124 @@ void import_media_from_directory_with_covers(const gchar *directory, Database *d
 
 void import_media_from_directory(const gchar *directory, Database *db) {
     import_media_from_directory_with_covers(directory, db, NULL);
+}
+
+static void scan_audio_files_recursive(const gchar *path, Database *db, CoverArtManager *cover_mgr, gint *count) {
+    GDir *dir = g_dir_open(path, 0, NULL);
+    if (!dir) return;
+    
+    const gchar *name;
+    while ((name = g_dir_read_name(dir)) != NULL) {
+        gchar *fullpath = g_build_filename(path, name, NULL);
+        
+        if (g_file_test(fullpath, G_FILE_TEST_IS_DIR)) {
+            scan_audio_files_recursive(fullpath, db, cover_mgr, count);
+        } else if (is_audio_file(name)) {
+            Track *track = g_new0(Track, 1);
+            track->file_path = g_strdup(fullpath);
+            
+            /* Extract title from filename as fallback */
+            gchar *basename = g_path_get_basename(fullpath);
+            gchar *title = g_strndup(basename, strlen(basename) - 4); /* Remove extension */
+            track->title = title;
+            g_free(basename);
+            
+            track->artist = g_strdup("Unknown Artist");
+            track->album = g_strdup("Unknown Album");
+            track->date_added = g_get_real_time() / 1000000;
+            
+            /* Try to extract metadata */
+            extract_tags_from_file(fullpath, track);
+            
+            /* Extract and cache album art if we have a cover art manager */
+            if (cover_mgr && track->artist && track->album) {
+                coverart_extract_and_cache(cover_mgr, fullpath, track->artist, track->album);
+            }
+            
+            /* Add to database - only audio files */
+            if (database_add_track(db, track) > 0) {
+                (*count)++;
+                if (*count % 10 == 0) {
+                    g_print("Imported %d audio tracks...\r", *count);
+                    fflush(stdout);
+                    
+                    /* Process pending GTK events to keep UI responsive */
+                    while (gtk_events_pending()) {
+                        gtk_main_iteration();
+                    }
+                }
+            }
+            
+            database_free_track(track);
+        }
+        g_free(fullpath);
+    }
+    
+    g_dir_close(dir);
+}
+
+static void scan_video_files_recursive(const gchar *path, Database *db, CoverArtManager *cover_mgr, gint *count) {
+    GDir *dir = g_dir_open(path, 0, NULL);
+    if (!dir) return;
+    
+    const gchar *name;
+    while ((name = g_dir_read_name(dir)) != NULL) {
+        gchar *fullpath = g_build_filename(path, name, NULL);
+        
+        if (g_file_test(fullpath, G_FILE_TEST_IS_DIR)) {
+            scan_video_files_recursive(fullpath, db, cover_mgr, count);
+        } else if (is_video_file(name)) {
+            Track *track = g_new0(Track, 1);
+            track->file_path = g_strdup(fullpath);
+            
+            /* Extract title from filename as fallback */
+            gchar *basename = g_path_get_basename(fullpath);
+            gchar *title = g_strndup(basename, strlen(basename) - 4); /* Remove extension */
+            track->title = title;
+            g_free(basename);
+            
+            track->artist = g_strdup("Unknown Artist");
+            track->album = g_strdup("Unknown Album");
+            track->date_added = g_get_real_time() / 1000000;
+            
+            /* Try to extract metadata */
+            extract_tags_from_file(fullpath, track);
+            
+            /* Add to database - only video files */
+            if (database_add_track(db, track) > 0) {
+                (*count)++;
+                if (*count % 10 == 0) {
+                    g_print("Imported %d video files...\r", *count);
+                    fflush(stdout);
+                    
+                    /* Process pending GTK events to keep UI responsive */
+                    while (gtk_events_pending()) {
+                        gtk_main_iteration();
+                    }
+                }
+            }
+            
+            database_free_track(track);
+        }
+        g_free(fullpath);
+    }
+    
+    g_dir_close(dir);
+}
+
+void import_audio_from_directory_with_covers(const gchar *directory, Database *db, CoverArtManager *cover_mgr) {
+    gint count = 0;
+    
+    g_print("Scanning %s for audio files", cover_mgr ? " and extracting cover art" : "");
+    g_print("...\n");
+    scan_audio_files_recursive(directory, db, cover_mgr, &count);
+    g_print("\nImported %d audio tracks total.\n", count);
+}
+
+void import_video_from_directory_with_covers(const gchar *directory, Database *db, CoverArtManager *cover_mgr) {
+    gint count = 0;
+    
+    g_print("Scanning for video files...\n");
+    scan_video_files_recursive(directory, db, cover_mgr, &count);
+    g_print("\nImported %d video files total.\n", count);
 }

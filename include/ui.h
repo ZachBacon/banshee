@@ -12,6 +12,7 @@
 #include "podcastview.h"
 #include "chapterview.h"
 #include "transcriptview.h"
+#include "videoview.h"
 
 typedef struct {
     GtkWidget *window;
@@ -46,6 +47,10 @@ typedef struct {
     /* Podcast view */
     PodcastView *podcast_view;
     PodcastManager *podcast_manager;
+    
+    /* Video view */
+    VideoView *video_view;
+    GtkWidget *video_overlay_container;  /* Overlay container for video playback */
     
     /* Main content area */
     GtkWidget *content_area;

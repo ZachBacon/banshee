@@ -43,12 +43,17 @@ gboolean database_init_tables(Database *db);
 gint database_add_track(Database *db, Track *track);
 Track* database_get_track(Database *db, gint track_id);
 GList* database_get_all_tracks(Database *db);
+gint database_get_audio_track_count(Database *db);
 GList* database_get_tracks_by_artist(Database *db, const gchar *artist);
 GList* database_get_tracks_by_album(Database *db, const gchar *artist, const gchar *album);
 GList* database_get_albums_by_artist(Database *db, const gchar *artist);
 gboolean database_update_track(Database *db, Track *track);
 gboolean database_delete_track(Database *db, gint track_id);
 GList* database_search_tracks(Database *db, const gchar *search_term);
+
+/* Video operations */
+GList* database_get_all_videos(Database *db);
+GList* database_search_videos(Database *db, const gchar *search_term);
 
 /* Playlist operations */
 gint database_create_playlist(Database *db, const gchar *name);
