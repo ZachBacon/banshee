@@ -96,6 +96,7 @@ static void on_volume_changed(GtkRange *range, gpointer user_data) {
 
 static void on_import_media_clicked(GtkMenuItem *item, gpointer user_data) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
+    (void)item;
     
     GtkWidget *dialog = gtk_file_chooser_dialog_new(
         "Select Music Folder",
@@ -349,40 +350,6 @@ static void on_album_selected(const gchar *artist, const gchar *album, gpointer 
     g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
 }
 
-static void on_chapter_seek(gpointer user_data, gdouble time) {
-    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
-    
-    /* Seek to chapter start time */
-    gint64 seek_pos = (gint64)(time * GST_SECOND);
-    player_seek(ui->player, seek_pos);
-    
-    g_print("Seeking to chapter at %.1f seconds\n", time);
-}
-
-static void on_chapters_button_clicked(GtkWidget *button, gpointer user_data) {
-    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
-    (void)button;
-    
-    if (!ui->current_chapters) {
-        return;
-    }
-    
-    /* Create popover if it doesn't exist */
-    if (!ui->chapter_popover) {
-        ui->chapter_view = chapter_view_new();
-        chapter_view_set_seek_callback(ui->chapter_view, on_chapter_seek, ui);
-        
-        ui->chapter_popover = gtk_popover_new(ui->chapters_button);
-        gtk_container_add(GTK_CONTAINER(ui->chapter_popover), chapter_view_get_widget(ui->chapter_view));
-        gtk_widget_set_size_request(chapter_view_get_widget(ui->chapter_view), 300, 400);
-    }
-    
-    /* Update chapters and show popover */
-    chapter_view_set_chapters(ui->chapter_view, ui->current_chapters);
-    gtk_widget_show_all(ui->chapter_popover);
-    gtk_popover_popup(GTK_POPOVER(ui->chapter_popover));
-}
-
 static void on_funding_url_clicked(GtkWidget *button, gpointer user_data) {
     (void)user_data;
     const gchar *url = (const gchar *)g_object_get_data(G_OBJECT(button), "funding_url");
@@ -392,100 +359,6 @@ static void on_funding_url_clicked(GtkWidget *button, gpointer user_data) {
         g_free(command);
         g_print("Opening funding URL: %s\n", url);
     }
-}
-
-static void on_transcript_button_clicked(GtkWidget *button, gpointer user_data) {
-    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
-    (void)button;
-    
-    if (!ui->current_transcript_url) {
-        return;
-    }
-    
-    /* Create popover if it doesn't exist */
-    if (!ui->transcript_popover) {
-        ui->transcript_view = transcript_view_new();
-        
-        ui->transcript_popover = gtk_popover_new(ui->transcript_button);
-        gtk_container_add(GTK_CONTAINER(ui->transcript_popover), transcript_view_get_widget(ui->transcript_view));
-        gtk_widget_set_size_request(transcript_view_get_widget(ui->transcript_view), 500, 600);
-    }
-    
-    /* Load transcript if not already loaded */
-    transcript_view_load_from_url(ui->transcript_view, ui->current_transcript_url, ui->current_transcript_type);
-    
-    gtk_widget_show_all(ui->transcript_popover);
-    gtk_popover_popup(GTK_POPOVER(ui->transcript_popover));
-}
-
-static void on_funding_button_clicked(GtkWidget *button, gpointer user_data) {
-    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
-    (void)button;
-    
-    if (!ui->current_funding) {
-        return;
-    }
-    
-    /* Create popover if it doesn't exist */
-    if (!ui->funding_popover) {
-        GtkWidget *funding_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-        gtk_widget_set_margin_start(funding_box, 10);
-        gtk_widget_set_margin_end(funding_box, 10);
-        gtk_widget_set_margin_top(funding_box, 10);
-        gtk_widget_set_margin_bottom(funding_box, 10);
-        
-        /* Title */
-        GtkWidget *title = gtk_label_new("Support This Podcast");
-        PangoAttrList *attrs = pango_attr_list_new();
-        pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
-        pango_attr_list_insert(attrs, pango_attr_scale_new(PANGO_SCALE_LARGE));
-        gtk_label_set_attributes(GTK_LABEL(title), attrs);
-        pango_attr_list_unref(attrs);
-        gtk_box_pack_start(GTK_BOX(funding_box), title, FALSE, FALSE, 0);
-        
-        /* Add funding options */
-        for (GList *l = ui->current_funding; l != NULL; l = l->next) {
-            PodcastFunding *funding = (PodcastFunding *)l->data;
-            
-            GtkWidget *funding_button = gtk_button_new();
-            gtk_button_set_relief(GTK_BUTTON(funding_button), GTK_RELIEF_NONE);
-            
-            GtkWidget *funding_label_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-            
-            /* Platform name */
-            GtkWidget *platform_label = gtk_label_new(funding->platform ? funding->platform : "Support");
-            PangoAttrList *platform_attrs = pango_attr_list_new();
-            pango_attr_list_insert(platform_attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
-            gtk_label_set_attributes(GTK_LABEL(platform_label), platform_attrs);
-            pango_attr_list_unref(platform_attrs);
-            gtk_box_pack_start(GTK_BOX(funding_label_box), platform_label, FALSE, FALSE, 0);
-            
-            /* Message */
-            if (funding->message) {
-                GtkWidget *message_label = gtk_label_new(funding->message);
-                gtk_label_set_line_wrap(GTK_LABEL(message_label), TRUE);
-                gtk_widget_set_opacity(message_label, 0.7);
-                gtk_box_pack_start(GTK_BOX(funding_label_box), message_label, FALSE, FALSE, 0);
-            }
-            
-            gtk_container_add(GTK_CONTAINER(funding_button), funding_label_box);
-            
-            /* Store URL in button data */
-            g_object_set_data_full(G_OBJECT(funding_button), "funding_url", 
-                                  g_strdup(funding->url), g_free);
-            
-            g_signal_connect(funding_button, "clicked", G_CALLBACK(on_funding_url_clicked), NULL);
-            
-            gtk_box_pack_start(GTK_BOX(funding_box), funding_button, FALSE, FALSE, 0);
-        }
-        
-        ui->funding_popover = gtk_popover_new(ui->funding_button);
-        gtk_container_add(GTK_CONTAINER(ui->funding_popover), funding_box);
-        gtk_widget_set_size_request(funding_box, 250, -1);
-    }
-    
-    gtk_widget_show_all(ui->funding_popover);
-    gtk_popover_popup(GTK_POPOVER(ui->funding_popover));
 }
 
 static void on_podcast_seek(gpointer user_data, gdouble time_seconds) {
@@ -511,6 +384,10 @@ static void on_podcast_seek(gpointer user_data, gdouble time_seconds) {
 static void on_podcast_episode_play(gpointer user_data, const gchar *uri, const gchar *title, GList *chapters, 
                                    const gchar *transcript_url, const gchar *transcript_type, GList *funding) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
+    (void)transcript_type;
+    (void)transcript_url;
+    (void)chapters;
+    (void)funding;
     
     /* Stop current playback and load podcast episode */
     player_stop(ui->player);
@@ -522,76 +399,17 @@ static void on_podcast_episode_play(gpointer user_data, const gchar *uri, const 
     gtk_label_set_text(GTK_LABEL(ui->now_playing_label), status);
     g_free(status);
     
-    /* Store chapters and enable chapters button */
-    if (ui->current_chapters) {
-        g_list_free_full(ui->current_chapters, (GDestroyNotify)podcast_chapter_free);
-        ui->current_chapters = NULL;
-    }
-    
+    /* Episode buttons are now in podcast toolbar, not global UI */
     if (chapters && g_list_length(chapters) > 0) {
-        /* Copy chapters for UI use */
-        for (GList *l = chapters; l != NULL; l = l->next) {
-            PodcastChapter *orig = (PodcastChapter *)l->data;
-            PodcastChapter *copy = g_new0(PodcastChapter, 1);
-            copy->start_time = orig->start_time;
-            copy->title = g_strdup(orig->title);
-            copy->img = g_strdup(orig->img);
-            copy->url = g_strdup(orig->url);
-            ui->current_chapters = g_list_append(ui->current_chapters, copy);
-        }
-        
-        gtk_widget_show(ui->chapters_button);
-        gtk_widget_set_sensitive(ui->chapters_button, TRUE);
-        g_print("Episode has %d chapters - click 'Chapters' button to view\n", g_list_length(chapters));
-    } else {
-        gtk_widget_hide(ui->chapters_button);
-        gtk_widget_set_sensitive(ui->chapters_button, FALSE);
+        g_print("Episode has %d chapters - use toolbar button\n", g_list_length(chapters));
     }
-    
-    /* Handle transcript */
-    g_free(ui->current_transcript_url);
-    g_free(ui->current_transcript_type);
-    ui->current_transcript_url = g_strdup(transcript_url);
-    ui->current_transcript_type = g_strdup(transcript_type);
     
     if (transcript_url && strlen(transcript_url) > 0) {
-        gtk_widget_show(ui->transcript_button);
-        gtk_widget_set_sensitive(ui->transcript_button, TRUE);
-        g_print("Episode has transcript - click 'Transcript' button to view\n");
-    } else {
-        gtk_widget_hide(ui->transcript_button);
-        gtk_widget_set_sensitive(ui->transcript_button, FALSE);
-    }
-    
-    /* Handle funding */
-    if (ui->current_funding) {
-        g_list_free_full(ui->current_funding, (GDestroyNotify)podcast_funding_free);
-        ui->current_funding = NULL;
-    }
-    
-    /* Recreate funding popover for new episode */
-    if (ui->funding_popover) {
-        gtk_widget_destroy(ui->funding_popover);
-        ui->funding_popover = NULL;
+        g_print("Episode has transcript - use toolbar button\n");
     }
     
     if (funding && g_list_length(funding) > 0) {
-        /* Copy funding list for UI use */
-        for (GList *l = funding; l != NULL; l = l->next) {
-            PodcastFunding *orig = (PodcastFunding *)l->data;
-            PodcastFunding *copy = g_new0(PodcastFunding, 1);
-            copy->url = g_strdup(orig->url);
-            copy->message = g_strdup(orig->message);
-            copy->platform = g_strdup(orig->platform);
-            ui->current_funding = g_list_append(ui->current_funding, copy);
-        }
-        
-        gtk_widget_show(ui->funding_button);
-        gtk_widget_set_sensitive(ui->funding_button, TRUE);
-        g_print("Episode has %d funding options - click 'Support' button to view\n", g_list_length(funding));
-    } else {
-        gtk_widget_hide(ui->funding_button);
-        gtk_widget_set_sensitive(ui->funding_button, FALSE);
+        g_print("Episode has %d funding options - use toolbar button\n", g_list_length(funding));
     }
 }
 
@@ -653,7 +471,7 @@ static GtkWidget* create_control_box(MediaPlayerUI *ui) {
     gtk_widget_set_margin_start(vbox, 10);
     gtk_widget_set_margin_end(vbox, 10);
     gtk_widget_set_margin_top(vbox, 5);
-    gtk_widget_set_margin_bottom(vbox, 10);
+    gtk_widget_set_margin_bottom(vbox, 2);
     
     /* Search row */
     GtkWidget *search_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
@@ -668,35 +486,7 @@ static GtkWidget* create_control_box(MediaPlayerUI *ui) {
     
     gtk_box_pack_start(GTK_BOX(vbox), search_row, FALSE, FALSE, 0);
     
-    /* Episode buttons row */
-    GtkWidget *control_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    
-    /* Spacer to push buttons to the right */
-    GtkWidget *spacer = gtk_label_new("");
-    gtk_box_pack_start(GTK_BOX(control_row), spacer, TRUE, TRUE, 0);
-    
-    /* Chapters button */
-    ui->chapters_button = gtk_button_new_with_label("Chapters");
-    gtk_widget_set_sensitive(ui->chapters_button, FALSE);  /* Disabled until chapters available */
-    gtk_widget_hide(ui->chapters_button);  /* Hidden until podcast content is playing */
-    g_signal_connect(ui->chapters_button, "clicked", G_CALLBACK(on_chapters_button_clicked), ui);
-    gtk_box_pack_end(GTK_BOX(control_row), ui->chapters_button, FALSE, FALSE, 5);
-    
-    /* Transcript button */
-    ui->transcript_button = gtk_button_new_with_label("Transcript");
-    gtk_widget_set_sensitive(ui->transcript_button, FALSE);  /* Disabled until transcript available */
-    gtk_widget_hide(ui->transcript_button);  /* Hidden until podcast content is playing */
-    g_signal_connect(ui->transcript_button, "clicked", G_CALLBACK(on_transcript_button_clicked), ui);
-    gtk_box_pack_end(GTK_BOX(control_row), ui->transcript_button, FALSE, FALSE, 5);
-    
-    /* Funding button */
-    ui->funding_button = gtk_button_new_with_label("Support");
-    gtk_widget_set_sensitive(ui->funding_button, FALSE);  /* Disabled until funding available */
-    gtk_widget_hide(ui->funding_button);  /* Hidden until podcast content is playing */
-    g_signal_connect(ui->funding_button, "clicked", G_CALLBACK(on_funding_button_clicked), ui);
-    gtk_box_pack_end(GTK_BOX(control_row), ui->funding_button, FALSE, FALSE, 5);
-    
-    gtk_box_pack_start(GTK_BOX(vbox), control_row, FALSE, FALSE, 0);
+    /* Episode buttons removed - now in podcast toolbar */
     
     return vbox;
 }
@@ -785,11 +575,6 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     /* Update search placeholder */
                     gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search library...");
                     
-                    /* Hide episode buttons for music library */
-                    gtk_widget_hide(ui->chapters_button);
-                    gtk_widget_hide(ui->transcript_button);
-                    gtk_widget_hide(ui->funding_button);
-                    
                     if (source->media_types & MEDIA_TYPE_VIDEO) {
                         /* Video library - no browsers, just video list */
                         gtk_widget_hide(ui->browser_container);
@@ -815,11 +600,6 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     /* Update search placeholder */
                     gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search playlist...");
                     
-                    /* Hide episode buttons for playlist */
-                    gtk_widget_hide(ui->chapters_button);
-                    gtk_widget_hide(ui->transcript_button);
-                    gtk_widget_hide(ui->funding_button);
-                    
                     /* Hide browsers for playlists */
                     gtk_widget_hide(ui->browser_container);
                     gtk_widget_hide(ui->album_container);
@@ -837,11 +617,6 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     
                     /* Update search placeholder */
                     gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search smart playlist...");
-                    
-                    /* Hide episode buttons for smart playlist */
-                    gtk_widget_hide(ui->chapters_button);
-                    gtk_widget_hide(ui->transcript_button);
-                    gtk_widget_hide(ui->funding_button);
                     
                     gtk_widget_hide(ui->browser_container);
                     gtk_widget_hide(ui->album_container);
@@ -863,11 +638,6 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     /* Update search placeholder */
                     gtk_entry_set_placeholder_text(GTK_ENTRY(ui->search_entry), "Search stations...");
                     
-                    /* Hide episode buttons for radio */
-                    gtk_widget_hide(ui->chapters_button);
-                    gtk_widget_hide(ui->transcript_button);
-                    gtk_widget_hide(ui->funding_button);
-                    
                     gtk_widget_hide(ui->browser_container);
                     gtk_widget_hide(ui->album_container);
                     ui_show_radio_stations(ui);
@@ -884,11 +654,6 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     
                     podcast_view_refresh_podcasts(ui->podcast_view);
                     
-                    /* Hide global episode buttons since they're now in podcast toolbar */
-                    gtk_widget_hide(ui->chapters_button);
-                    gtk_widget_hide(ui->transcript_button);
-                    gtk_widget_hide(ui->funding_button);
-                    
                     /* Unblock signal after updating */
                     g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
                     break;
@@ -896,11 +661,6 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                 default:
                     /* Switch to music view */
                     gtk_stack_set_visible_child_name(content_stack, "music");
-                    
-                    /* Hide episode buttons for default sources */
-                    gtk_widget_hide(ui->chapters_button);
-                    gtk_widget_hide(ui->transcript_button);
-                    gtk_widget_hide(ui->funding_button);
                     
                     gtk_widget_hide(ui->browser_container);
                     gtk_widget_hide(ui->album_container);
@@ -1028,27 +788,14 @@ MediaPlayerUI* ui_new(MediaPlayer *player, Database *database) {
     /* Set podcast seek callback */
     podcast_view_set_seek_callback(ui->podcast_view, on_podcast_seek, ui);
     
-    /* Initialize chapter view fields */
-    ui->chapter_view = NULL;
-    ui->chapter_popover = NULL;
-    ui->current_chapters = NULL;
-    
-    /* Initialize transcript view fields */
-    ui->transcript_view = NULL;
-    ui->transcript_popover = NULL;
-    ui->current_transcript_url = NULL;
-    ui->current_transcript_type = NULL;
-    
-    /* Initialize funding view fields */
-    ui->funding_popover = NULL;
-    ui->current_funding = NULL;
-    
     /* Playback controls */
     ui->control_box = create_control_box(ui);
     gtk_box_pack_start(GTK_BOX(ui->main_box), ui->control_box, FALSE, FALSE, 0);
     
-    /* Status bar */
+    /* Status bar - hidden to minimize bottom gap */
     ui->statusbar = gtk_statusbar_new();
+    gtk_widget_set_no_show_all(ui->statusbar, TRUE);
+    gtk_widget_hide(ui->statusbar);
     gtk_box_pack_start(GTK_BOX(ui->main_box), ui->statusbar, FALSE, FALSE, 0);
     
     /* Connect window signals */
@@ -1169,11 +916,6 @@ void ui_on_track_selected(GtkTreeSelection *selection, gpointer user_data) {
                 gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
                 g_free(label);
                 
-                /* Hide episode buttons for radio stations */
-                gtk_widget_hide(ui->chapters_button);
-                gtk_widget_hide(ui->transcript_button);
-                gtk_widget_hide(ui->funding_button);
-                
                 radio_station_free(station);
             }
         } else {
@@ -1203,11 +945,6 @@ void ui_on_track_selected(GtkTreeSelection *selection, gpointer user_data) {
                                                track->title ? track->title : "Unknown");
                 gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
                 g_free(label);
-                
-                /* Hide episode buttons for music tracks */
-                gtk_widget_hide(ui->chapters_button);
-                gtk_widget_hide(ui->transcript_button);
-                gtk_widget_hide(ui->funding_button);
                 
                 database_free_track(track);
             }
@@ -1299,29 +1036,6 @@ void ui_free(MediaPlayerUI *ui) {
         podcast_manager_free(ui->podcast_manager);
     }
     
-    /* Free current chapters */
-    if (ui->current_chapters) {
-        g_list_free_full(ui->current_chapters, (GDestroyNotify)podcast_chapter_free);
-    }
-    
-    /* Free chapter view */
-    if (ui->chapter_view) {
-        chapter_view_free(ui->chapter_view);
-    }
-    
-    /* Free transcript view */
-    if (ui->transcript_view) {
-        transcript_view_free(ui->transcript_view);
-    }
-    
-    g_free(ui->current_transcript_url);
-    g_free(ui->current_transcript_type);
-    
-    /* Free current funding */
-    if (ui->current_funding) {
-        g_list_free_full(ui->current_funding, (GDestroyNotify)podcast_funding_free);
-    }
-    
     if (ui->source_manager) {
         source_manager_free(ui->source_manager);
     }
@@ -1344,6 +1058,7 @@ void ui_free(MediaPlayerUI *ui) {
 /* Callback for preferences menu item */
 static void on_preferences_clicked(GtkMenuItem *item, gpointer user_data) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
+    (void)item;
     ui_show_preferences_dialog(ui);
 }
 

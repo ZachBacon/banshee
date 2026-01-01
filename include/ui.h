@@ -47,24 +47,6 @@ typedef struct {
     PodcastView *podcast_view;
     PodcastManager *podcast_manager;
     
-    /* Chapter view */
-    ChapterView *chapter_view;
-    GtkWidget *chapter_popover;
-    GtkWidget *chapters_button;
-    GList *current_chapters;
-    
-    /* Transcript view */
-    TranscriptView *transcript_view;
-    GtkWidget *transcript_popover;
-    GtkWidget *transcript_button;
-    gchar *current_transcript_url;
-    gchar *current_transcript_type;
-    
-    /* Funding view */
-    GtkWidget *funding_popover;
-    GtkWidget *funding_button;
-    GList *current_funding;
-    
     /* Main content area */
     GtkWidget *content_area;
     GtkWidget *track_listview;
