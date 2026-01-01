@@ -22,6 +22,19 @@ typedef struct {
 static gboolean update_position(gpointer user_data);
 static void on_video_position_update(MediaPlayer *player, gint64 position, gint64 duration, gpointer user_data);
 
+typedef struct {
+    MediaPlayerUI *ui;
+    gint64 position;
+    gint64 duration;
+} PositionUpdateData;
+
+static gboolean update_position_main_thread(gpointer user_data) {
+    PositionUpdateData *data = (PositionUpdateData *)user_data;
+    ui_update_position(data->ui, data->position, data->duration);
+    g_free(data);
+    return G_SOURCE_REMOVE;
+}
+
 /* Global app pointer for video view to access */
 static Application *g_app = NULL;
 
@@ -35,7 +48,12 @@ static void on_video_position_update(MediaPlayer *player, gint64 position, gint6
     (void)player;  /* Unused */
     Application *app = (Application *)user_data;
     if (app && app->ui) {
-        ui_update_position(app->ui, position, duration);
+        /* Use g_idle_add to ensure UI updates happen on main thread */
+        PositionUpdateData *data = g_new0(PositionUpdateData, 1);
+        data->ui = app->ui;
+        data->position = position;
+        data->duration = duration;
+        g_idle_add(update_position_main_thread, data);
     }
 }
 
@@ -126,6 +144,9 @@ static Application* init_application(void) {
         g_free(app);
         return NULL;
     }
+    
+    /* Set up position callback for seek bar updates */
+    player_set_position_callback(app->player, (PlayerPositionCallback)on_video_position_update, app);
     
     /* Load tracks and update UI */
     GList *tracks = database_get_all_tracks(app->database);

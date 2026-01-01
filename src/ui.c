@@ -450,7 +450,7 @@ static GtkWidget* create_headerbar(MediaPlayerUI *ui) {
     
     ui->seek_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 1);
     gtk_scale_set_draw_value(GTK_SCALE(ui->seek_scale), FALSE);
-    g_signal_connect(ui->seek_scale, "value-changed", G_CALLBACK(on_seek_changed), ui);
+    ui->seek_handler_id = g_signal_connect(ui->seek_scale, "value-changed", G_CALLBACK(on_seek_changed), ui);
     gtk_widget_set_size_request(ui->seek_scale, 300, -1);
     gtk_box_pack_start(GTK_BOX(progress_box), ui->seek_scale, FALSE, FALSE, 0);
 
@@ -1272,7 +1272,11 @@ void ui_update_position(MediaPlayerUI *ui, gint64 position, gint64 duration) {
     
     if (duration > 0) {
         gdouble value = (gdouble)position / (gdouble)duration * 100.0;
+        
+        /* Block the seek handler to prevent feedback loop */
+        g_signal_handler_block(ui->seek_scale, ui->seek_handler_id);
         gtk_range_set_value(GTK_RANGE(ui->seek_scale), value);
+        g_signal_handler_unblock(ui->seek_scale, ui->seek_handler_id);
         
         gchar pos_str[16], dur_str[16];
         format_time(position / GST_SECOND, pos_str, sizeof(pos_str));

@@ -55,6 +55,22 @@ typedef struct {
 } PositionCallbackData;
 
 static PositionCallbackData *position_callback_data = NULL;
+static guint position_timer_id = 0;
+
+/* Timer callback for position updates */
+static gboolean position_timer_callback(gpointer user_data) {
+    MediaPlayer *player = (MediaPlayer *)user_data;
+    
+    if (player->state == PLAYER_STATE_PLAYING && position_callback_data && position_callback_data->callback) {
+        gint64 pos, dur;
+        if (gst_element_query_position(player->playbin, GST_FORMAT_TIME, &pos) &&
+            gst_element_query_duration(player->playbin, GST_FORMAT_TIME, &dur)) {
+            position_callback_data->callback(player, pos, dur, position_callback_data->user_data);
+        }
+    }
+    
+    return G_SOURCE_CONTINUE;  /* Keep the timer running */
+}
 
 static gboolean bus_callback(GstBus *bus, GstMessage *msg, gpointer data) {
     MediaPlayer *player = (MediaPlayer *)data;
@@ -447,6 +463,12 @@ gboolean player_play(MediaPlayer *player) {
     }
     
     player->state = PLAYER_STATE_PLAYING;
+    
+    /* Start position timer for UI updates */
+    if (position_callback_data && position_timer_id == 0) {
+        position_timer_id = g_timeout_add(100, position_timer_callback, player);  /* Update every 100ms */
+    }
+    
     return TRUE;
 }
 
@@ -461,6 +483,13 @@ gboolean player_pause(MediaPlayer *player) {
     }
     
     player->state = PLAYER_STATE_PAUSED;
+    
+    /* Stop position timer */
+    if (position_timer_id != 0) {
+        g_source_remove(position_timer_id);
+        position_timer_id = 0;
+    }
+    
     return TRUE;
 }
 
@@ -476,6 +505,13 @@ gboolean player_stop(MediaPlayer *player) {
     
     player->state = PLAYER_STATE_STOPPED;
     player->position = 0;
+    
+    /* Stop position timer */
+    if (position_timer_id != 0) {
+        g_source_remove(position_timer_id);
+        position_timer_id = 0;
+    }
+    
     return TRUE;
 }
 

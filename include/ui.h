@@ -89,6 +89,7 @@ typedef struct {
     
     /* Signal handlers */
     gulong track_selection_handler_id;
+    gulong seek_handler_id;
 } MediaPlayerUI;
 
 /* UI initialization */
