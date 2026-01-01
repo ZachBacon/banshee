@@ -43,6 +43,7 @@ typedef struct {
     GtkWidget *chapters_button;
     GtkWidget *transcript_button;
     GtkWidget *support_button;
+    GtkWidget *value_button;  /* Value 4 Value (Lightning) button */
     
     /* Episode data */
     ChapterView *chapter_view;
@@ -52,9 +53,11 @@ typedef struct {
     gchar *current_transcript_url;
     gchar *current_transcript_type;
     GList *current_funding;
+    GList *current_value;     /* Current episode/podcast Value 4 Value info */
     
     GtkWidget *transcript_popover;
     GtkWidget *funding_popover;
+    GtkWidget *value_popover; /* Value 4 Value popover */
     
     /* Backend references */
     PodcastManager *podcast_manager;

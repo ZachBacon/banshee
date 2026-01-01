@@ -121,6 +121,42 @@ static const char *CREATE_PREFERENCES_TABLE =
     "value TEXT"
     ");";
 
+static const char *CREATE_PODCAST_VALUE_TABLE =
+    "CREATE TABLE IF NOT EXISTS podcast_value ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "podcast_id INTEGER,"
+    "type TEXT NOT NULL,"
+    "method TEXT NOT NULL,"
+    "suggested TEXT,"
+    "FOREIGN KEY(podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE"
+    ");";
+
+static const char *CREATE_EPISODE_VALUE_TABLE =
+    "CREATE TABLE IF NOT EXISTS episode_value ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "episode_id INTEGER,"
+    "type TEXT NOT NULL,"
+    "method TEXT NOT NULL,"
+    "suggested TEXT,"
+    "FOREIGN KEY(episode_id) REFERENCES podcast_episodes(id) ON DELETE CASCADE"
+    ");";
+
+static const char *CREATE_VALUE_RECIPIENTS_TABLE =
+    "CREATE TABLE IF NOT EXISTS value_recipients ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "value_id INTEGER,"
+    "value_type TEXT NOT NULL,"
+    "name TEXT,"
+    "recipient_type TEXT,"
+    "address TEXT,"
+    "split INTEGER,"
+    "fee INTEGER DEFAULT 0,"
+    "custom_key TEXT,"
+    "custom_value TEXT,"
+    "FOREIGN KEY(value_id) REFERENCES podcast_value(id) ON DELETE CASCADE,"
+    "FOREIGN KEY(value_id) REFERENCES episode_value(id) ON DELETE CASCADE"
+    ");";
+
 
 Database* database_new(const gchar *db_path) {
     Database *db = g_new0(Database, 1);
@@ -220,6 +256,30 @@ gboolean database_init_tables(Database *db) {
     
     /* Create preferences table */
     rc = sqlite3_exec(db->db, CREATE_PREFERENCES_TABLE, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_printerr("SQL error: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    
+    /* Create podcast_value table */
+    rc = sqlite3_exec(db->db, CREATE_PODCAST_VALUE_TABLE, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_printerr("SQL error: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    
+    /* Create episode_value table */
+    rc = sqlite3_exec(db->db, CREATE_EPISODE_VALUE_TABLE, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_printerr("SQL error: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    
+    /* Create value_recipients table */
+    rc = sqlite3_exec(db->db, CREATE_VALUE_RECIPIENTS_TABLE, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
         g_printerr("SQL error: %s\n", err_msg);
         sqlite3_free(err_msg);
@@ -893,6 +953,9 @@ GList* database_get_podcast_episodes(Database *db, gint podcast_id) {
         episode->transcript_url = g_strdup((const gchar *)sqlite3_column_text(stmt, 15));
         episode->transcript_type = g_strdup((const gchar *)sqlite3_column_text(stmt, 16));
         
+        /* Load value information */
+        episode->value = database_load_episode_value(db, episode->id);
+        
         episodes = g_list_append(episodes, episode);
     }
     
@@ -938,6 +1001,9 @@ PodcastEpisode* database_get_episode_by_id(Database *db, gint episode_id) {
         
         /* Load funding information */
         episode->funding = database_get_episode_funding(db, episode_id);
+        
+        /* Load value information */
+        episode->value = database_load_episode_value(db, episode_id);
     }
     
     sqlite3_finalize(stmt);
@@ -971,6 +1037,10 @@ GList* database_get_podcasts(Database *db) {
         
         /* Load funding information */
         podcast->funding = database_load_podcast_funding(db, podcast->id);
+        
+        /* Initialize fields not stored in database */
+        podcast->images = NULL;
+        podcast->value = database_load_podcast_value(db, podcast->id);
         
         podcasts = g_list_append(podcasts, podcast);
     }
@@ -1008,6 +1078,10 @@ Podcast* database_get_podcast_by_id(Database *db, gint podcast_id) {
         
         /* Load funding information */
         podcast->funding = database_load_podcast_funding(db, podcast_id);
+        
+        /* Initialize fields not stored in database */
+        podcast->images = NULL;
+        podcast->value = database_load_podcast_value(db, podcast_id);
     }
     
     sqlite3_finalize(stmt);
@@ -1137,6 +1211,238 @@ GList* database_load_podcast_funding(Database *db, gint podcast_id) {
     
     sqlite3_finalize(stmt);
     return funding_list;
+}
+
+gboolean database_save_podcast_value(Database *db, gint podcast_id, GList *value_list) {
+    if (!db || !db->db || podcast_id <= 0) return FALSE;
+    
+    /* First, delete existing values for this podcast */
+    const char *delete_sql = "DELETE FROM podcast_value WHERE podcast_id = ?;";
+    sqlite3_stmt *delete_stmt;
+    int rc = sqlite3_prepare_v2(db->db, delete_sql, -1, &delete_stmt, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_int(delete_stmt, 1, podcast_id);
+        sqlite3_step(delete_stmt);
+        sqlite3_finalize(delete_stmt);
+    }
+    
+    if (!value_list) return TRUE; /* No values to save */
+    
+    /* Save each value in the list */
+    for (GList *l = value_list; l != NULL; l = l->next) {
+        PodcastValue *value = (PodcastValue *)l->data;
+        
+        /* Insert new value entry */
+        const char *insert_sql = "INSERT INTO podcast_value (podcast_id, type, method, suggested) VALUES (?, ?, ?, ?);";
+        sqlite3_stmt *insert_stmt;
+        rc = sqlite3_prepare_v2(db->db, insert_sql, -1, &insert_stmt, NULL);
+        if (rc != SQLITE_OK) return FALSE;
+        
+        sqlite3_bind_int(insert_stmt, 1, podcast_id);
+        sqlite3_bind_text(insert_stmt, 2, value->type, -1, SQLITE_STATIC);
+        sqlite3_bind_text(insert_stmt, 3, value->method, -1, SQLITE_STATIC);
+        sqlite3_bind_text(insert_stmt, 4, value->suggested, -1, SQLITE_STATIC);
+        
+        rc = sqlite3_step(insert_stmt);
+        sqlite3_finalize(insert_stmt);
+        
+        if (rc != SQLITE_DONE) return FALSE;
+        
+        gint64 value_id = sqlite3_last_insert_rowid(db->db);
+        
+        /* Save recipients */
+        if (value->recipients) {
+            const char *recipient_sql = "INSERT INTO value_recipients (value_id, value_type, name, recipient_type, address, split, fee, custom_key, custom_value) VALUES (?, 'podcast', ?, ?, ?, ?, ?, ?, ?);";
+            sqlite3_stmt *recipient_stmt;
+            rc = sqlite3_prepare_v2(db->db, recipient_sql, -1, &recipient_stmt, NULL);
+            if (rc != SQLITE_OK) return FALSE;
+            
+            for (GList *rl = value->recipients; rl != NULL; rl = rl->next) {
+                ValueRecipient *recipient = (ValueRecipient *)rl->data;
+                
+                sqlite3_bind_int64(recipient_stmt, 1, value_id);
+                sqlite3_bind_text(recipient_stmt, 2, recipient->name, -1, SQLITE_STATIC);
+                sqlite3_bind_text(recipient_stmt, 3, recipient->type, -1, SQLITE_STATIC);
+                sqlite3_bind_text(recipient_stmt, 4, recipient->address, -1, SQLITE_STATIC);
+                sqlite3_bind_int(recipient_stmt, 5, recipient->split);
+                sqlite3_bind_int(recipient_stmt, 6, recipient->fee ? 1 : 0);
+                sqlite3_bind_text(recipient_stmt, 7, recipient->custom_key, -1, SQLITE_STATIC);
+                sqlite3_bind_text(recipient_stmt, 8, recipient->custom_value, -1, SQLITE_STATIC);
+                
+                sqlite3_step(recipient_stmt);
+                sqlite3_reset(recipient_stmt);
+            }
+            
+            sqlite3_finalize(recipient_stmt);
+        }
+    }
+    
+    return TRUE;
+}
+
+gboolean database_save_episode_value(Database *db, gint episode_id, GList *value_list) {
+    if (!db || !db->db || episode_id <= 0) return FALSE;
+    
+    /* First, delete existing values for this episode */
+    const char *delete_sql = "DELETE FROM episode_value WHERE episode_id = ?;";
+    sqlite3_stmt *delete_stmt;
+    int rc = sqlite3_prepare_v2(db->db, delete_sql, -1, &delete_stmt, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_int(delete_stmt, 1, episode_id);
+        sqlite3_step(delete_stmt);
+        sqlite3_finalize(delete_stmt);
+    }
+    
+    if (!value_list) return TRUE; /* No values to save */
+    
+    /* Save each value in the list */
+    for (GList *l = value_list; l != NULL; l = l->next) {
+        PodcastValue *value = (PodcastValue *)l->data;
+        
+        /* Insert new value entry */
+        const char *insert_sql = "INSERT INTO episode_value (episode_id, type, method, suggested) VALUES (?, ?, ?, ?);";
+        sqlite3_stmt *insert_stmt;
+        rc = sqlite3_prepare_v2(db->db, insert_sql, -1, &insert_stmt, NULL);
+        if (rc != SQLITE_OK) return FALSE;
+        
+        sqlite3_bind_int(insert_stmt, 1, episode_id);
+        sqlite3_bind_text(insert_stmt, 2, value->type, -1, SQLITE_STATIC);
+        sqlite3_bind_text(insert_stmt, 3, value->method, -1, SQLITE_STATIC);
+        sqlite3_bind_text(insert_stmt, 4, value->suggested, -1, SQLITE_STATIC);
+        
+        rc = sqlite3_step(insert_stmt);
+        sqlite3_finalize(insert_stmt);
+        
+        if (rc != SQLITE_DONE) return FALSE;
+        
+        gint64 value_id = sqlite3_last_insert_rowid(db->db);
+        
+        /* Save recipients */
+        if (value->recipients) {
+            const char *recipient_sql = "INSERT INTO value_recipients (value_id, value_type, name, recipient_type, address, split, fee, custom_key, custom_value) VALUES (?, 'episode', ?, ?, ?, ?, ?, ?, ?);";
+            sqlite3_stmt *recipient_stmt;
+            rc = sqlite3_prepare_v2(db->db, recipient_sql, -1, &recipient_stmt, NULL);
+            if (rc != SQLITE_OK) return FALSE;
+            
+            for (GList *rl = value->recipients; rl != NULL; rl = rl->next) {
+                ValueRecipient *recipient = (ValueRecipient *)rl->data;
+                
+                sqlite3_bind_int64(recipient_stmt, 1, value_id);
+                sqlite3_bind_text(recipient_stmt, 2, recipient->name, -1, SQLITE_STATIC);
+                sqlite3_bind_text(recipient_stmt, 3, recipient->type, -1, SQLITE_STATIC);
+                sqlite3_bind_text(recipient_stmt, 4, recipient->address, -1, SQLITE_STATIC);
+                sqlite3_bind_int(recipient_stmt, 5, recipient->split);
+                sqlite3_bind_int(recipient_stmt, 6, recipient->fee ? 1 : 0);
+                sqlite3_bind_text(recipient_stmt, 7, recipient->custom_key, -1, SQLITE_STATIC);
+                sqlite3_bind_text(recipient_stmt, 8, recipient->custom_value, -1, SQLITE_STATIC);
+                
+                sqlite3_step(recipient_stmt);
+                sqlite3_reset(recipient_stmt);
+            }
+            
+            sqlite3_finalize(recipient_stmt);
+        }
+    }
+    
+    return TRUE;
+}
+
+GList* database_load_podcast_value(Database *db, gint podcast_id) {
+    if (!db || !db->db || podcast_id <= 0) return NULL;
+    
+    const char *sql = "SELECT id, type, method, suggested FROM podcast_value WHERE podcast_id = ?;";
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return NULL;
+    
+    sqlite3_bind_int(stmt, 1, podcast_id);
+    
+    GList *value_list = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        gint64 value_id = sqlite3_column_int64(stmt, 0);
+        PodcastValue *value = g_new0(PodcastValue, 1);
+        value->type = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
+        value->method = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        value->suggested = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
+        value->recipients = NULL;
+        
+        /* Load recipients */
+        const char *recipient_sql = "SELECT name, recipient_type, address, split, fee, custom_key, custom_value FROM value_recipients WHERE value_id = ? AND value_type = 'podcast';";
+        sqlite3_stmt *recipient_stmt;
+        rc = sqlite3_prepare_v2(db->db, recipient_sql, -1, &recipient_stmt, NULL);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_int64(recipient_stmt, 1, value_id);
+            
+            while (sqlite3_step(recipient_stmt) == SQLITE_ROW) {
+                ValueRecipient *recipient = g_new0(ValueRecipient, 1);
+                recipient->name = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 0));
+                recipient->type = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 1));
+                recipient->address = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 2));
+                recipient->split = sqlite3_column_int(recipient_stmt, 3);
+                recipient->fee = sqlite3_column_int(recipient_stmt, 4) != 0;
+                recipient->custom_key = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 5));
+                recipient->custom_value = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 6));
+                
+                value->recipients = g_list_append(value->recipients, recipient);
+            }
+            
+            sqlite3_finalize(recipient_stmt);
+        }
+        
+        value_list = g_list_append(value_list, value);
+    }
+    
+    sqlite3_finalize(stmt);
+    return value_list;
+}
+
+GList* database_load_episode_value(Database *db, gint episode_id) {
+    if (!db || !db->db || episode_id <= 0) return NULL;
+    
+    const char *sql = "SELECT id, type, method, suggested FROM episode_value WHERE episode_id = ?;";
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return NULL;
+    
+    sqlite3_bind_int(stmt, 1, episode_id);
+    
+    GList *value_list = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        gint64 value_id = sqlite3_column_int64(stmt, 0);
+        PodcastValue *value = g_new0(PodcastValue, 1);
+        value->type = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
+        value->method = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        value->suggested = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
+        value->recipients = NULL;
+        
+        /* Load recipients */
+        const char *recipient_sql = "SELECT name, recipient_type, address, split, fee, custom_key, custom_value FROM value_recipients WHERE value_id = ? AND value_type = 'episode';";
+        sqlite3_stmt *recipient_stmt;
+        rc = sqlite3_prepare_v2(db->db, recipient_sql, -1, &recipient_stmt, NULL);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_int64(recipient_stmt, 1, value_id);
+            
+            while (sqlite3_step(recipient_stmt) == SQLITE_ROW) {
+                ValueRecipient *recipient = g_new0(ValueRecipient, 1);
+                recipient->name = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 0));
+                recipient->type = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 1));
+                recipient->address = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 2));
+                recipient->split = sqlite3_column_int(recipient_stmt, 3);
+                recipient->fee = sqlite3_column_int(recipient_stmt, 4) != 0;
+                recipient->custom_key = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 5));
+                recipient->custom_value = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 6));
+                
+                value->recipients = g_list_append(value->recipients, recipient);
+            }
+            
+            sqlite3_finalize(recipient_stmt);
+        }
+        
+        value_list = g_list_append(value_list, value);
+    }
+    
+    sqlite3_finalize(stmt);
+    return value_list;
 }
 
 gboolean database_update_episode_downloaded(Database *db, gint episode_id, const gchar *local_path) {

@@ -23,6 +23,7 @@ struct Podcast {
     gboolean auto_download;
     GList *funding;  /* List of PodcastFunding */
     GList *images;   /* List of PodcastImage */
+    GList *value;    /* List of PodcastValue (Value4Value) */
 };
 
 /* Episode structure with Podcast 2.0 features */
@@ -99,6 +100,7 @@ typedef struct {
     gchar *type;
     gchar *address;
     gint split;
+    gboolean fee;
     gchar *custom_key;
     gchar *custom_value;
 } ValueRecipient;
@@ -177,12 +179,15 @@ void podcast_person_free(PodcastPerson *person);
 void podcast_image_free(PodcastImage *image);
 void podcast_funding_free(PodcastFunding *funding);
 void podcast_value_free(PodcastValue *value);
+void value_recipient_free(ValueRecipient *recipient);
 void podcast_chapter_free(PodcastChapter *chapter);
 
 /* Copy functions for deep copying */
 PodcastChapter* podcast_chapter_copy(const PodcastChapter *chapter);
 PodcastImage* podcast_image_copy(const PodcastImage *image);
 PodcastFunding* podcast_funding_copy(const PodcastFunding *funding);
+PodcastValue* podcast_value_copy(const PodcastValue *value);
+ValueRecipient* value_recipient_copy(const ValueRecipient *recipient);
 
 /* RSS Feed parsing */
 Podcast* podcast_parse_feed(const gchar *feed_url);

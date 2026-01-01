@@ -83,6 +83,12 @@ GList* database_get_episode_funding(Database *db, gint episode_id);
 gboolean database_save_podcast_funding(Database *db, gint podcast_id, GList *funding_list);
 GList* database_load_podcast_funding(Database *db, gint podcast_id);
 
+/* Value 4 Value operations */
+gboolean database_save_podcast_value(Database *db, gint podcast_id, GList *value_list);
+gboolean database_save_episode_value(Database *db, gint episode_id, GList *value_list);
+GList* database_load_podcast_value(Database *db, gint podcast_id);
+GList* database_load_episode_value(Database *db, gint episode_id);
+
 /* Preference operations */
 gboolean database_set_preference(Database *db, const gchar *key, const gchar *value);
 gchar* database_get_preference(Database *db, const gchar *key, const gchar *default_value);

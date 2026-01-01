@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <sqlite3.h>
+#include <stdint.h>
 
 #ifdef _WIN32
 /* Minimal strptime implementation for Windows */
@@ -195,6 +196,12 @@ void podcast_free(Podcast *podcast) {
     g_free(podcast->language);
     g_list_free_full(podcast->funding, (GDestroyNotify)podcast_funding_free);
     g_list_free_full(podcast->images, (GDestroyNotify)podcast_image_free);
+    
+    /* Safety check for value field - ensure it's either NULL or a valid pointer */
+    if (podcast->value != NULL && (uintptr_t)podcast->value > 0x1000) {
+        g_list_free_full(podcast->value, (GDestroyNotify)podcast_value_free);
+    }
+    
     g_free(podcast);
 }
 
@@ -251,12 +258,22 @@ void podcast_image_free(PodcastImage *image) {
     g_free(image);
 }
 
+void value_recipient_free(ValueRecipient *recipient) {
+    if (!recipient) return;
+    g_free(recipient->name);
+    g_free(recipient->type);
+    g_free(recipient->address);
+    g_free(recipient->custom_key);
+    g_free(recipient->custom_value);
+    g_free(recipient);
+}
+
 void podcast_value_free(PodcastValue *value) {
     if (!value) return;
     g_free(value->type);
     g_free(value->method);
     g_free(value->suggested);
-    g_list_free_full(value->recipients, g_free);
+    g_list_free_full(value->recipients, (GDestroyNotify)value_recipient_free);
     g_free(value);
 }
 
@@ -303,6 +320,33 @@ PodcastImage* podcast_image_copy(const PodcastImage *image) {
     copy->height = image->height;
     copy->type = g_strdup(image->type);
     copy->purpose = g_strdup(image->purpose);
+    
+    return copy;
+}
+
+ValueRecipient* value_recipient_copy(const ValueRecipient *recipient) {
+    if (!recipient) return NULL;
+    
+    ValueRecipient *copy = g_new0(ValueRecipient, 1);
+    copy->name = g_strdup(recipient->name);
+    copy->type = g_strdup(recipient->type);
+    copy->address = g_strdup(recipient->address);
+    copy->split = recipient->split;
+    copy->fee = recipient->fee;
+    copy->custom_key = g_strdup(recipient->custom_key);
+    copy->custom_value = g_strdup(recipient->custom_value);
+    
+    return copy;
+}
+
+PodcastValue* podcast_value_copy(const PodcastValue *value) {
+    if (!value) return NULL;
+    
+    PodcastValue *copy = g_new0(PodcastValue, 1);
+    copy->type = g_strdup(value->type);
+    copy->method = g_strdup(value->method);
+    copy->suggested = g_strdup(value->suggested);
+    copy->recipients = g_list_copy_deep(value->recipients, (GCopyFunc)value_recipient_copy, NULL);
     
     return copy;
 }
@@ -506,6 +550,101 @@ Podcast* podcast_parse_feed(const gchar *feed_url) {
             }
         }
         funding_node = funding_node->next;
+    }
+    
+    /* Parse Podcast 2.0 value tags at channel level */
+    xmlNodePtr value_node = channel->children;
+    while (value_node) {
+        if (value_node->type == XML_ELEMENT_NODE && 
+            xmlStrcmp(value_node->name, (const xmlChar *)"value") == 0 &&
+            value_node->ns && xmlStrcmp(value_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
+            
+            PodcastValue *value = g_new0(PodcastValue, 1);
+            
+            xmlChar *type = xmlGetProp(value_node, (const xmlChar *)"type");
+            xmlChar *method = xmlGetProp(value_node, (const xmlChar *)"method");
+            xmlChar *suggested = xmlGetProp(value_node, (const xmlChar *)"suggested");
+            
+            if (type) {
+                value->type = g_strdup((gchar *)type);
+                xmlFree(type);
+            }
+            if (method) {
+                value->method = g_strdup((gchar *)method);
+                xmlFree(method);
+            }
+            if (suggested) {
+                value->suggested = g_strdup((gchar *)suggested);
+                xmlFree(suggested);
+            }
+            
+            /* Parse valueRecipient child elements */
+            value->recipients = NULL;
+            xmlNodePtr recipient_node = value_node->children;
+            while (recipient_node) {
+                if (recipient_node->type == XML_ELEMENT_NODE && 
+                    xmlStrcmp(recipient_node->name, (const xmlChar *)"valueRecipient") == 0 &&
+                    recipient_node->ns && xmlStrcmp(recipient_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
+                    
+                    ValueRecipient *recipient = g_new0(ValueRecipient, 1);
+                    
+                    xmlChar *name = xmlGetProp(recipient_node, (const xmlChar *)"name");
+                    xmlChar *type = xmlGetProp(recipient_node, (const xmlChar *)"type");
+                    xmlChar *address = xmlGetProp(recipient_node, (const xmlChar *)"address");
+                    xmlChar *split_str = xmlGetProp(recipient_node, (const xmlChar *)"split");
+                    xmlChar *fee_str = xmlGetProp(recipient_node, (const xmlChar *)"fee");
+                    xmlChar *custom_key = xmlGetProp(recipient_node, (const xmlChar *)"customKey");
+                    xmlChar *custom_value = xmlGetProp(recipient_node, (const xmlChar *)"customValue");
+                    
+                    if (name) {
+                        recipient->name = g_strdup((gchar *)name);
+                        xmlFree(name);
+                    }
+                    if (type) {
+                        recipient->type = g_strdup((gchar *)type);
+                        xmlFree(type);
+                    }
+                    if (address) {
+                        recipient->address = g_strdup((gchar *)address);
+                        xmlFree(address);
+                    }
+                    if (split_str) {
+                        recipient->split = atoi((gchar *)split_str);
+                        xmlFree(split_str);
+                    }
+                    if (fee_str) {
+                        recipient->fee = (xmlStrcmp(fee_str, (const xmlChar *)"true") == 0);
+                        xmlFree(fee_str);
+                    }
+                    if (custom_key) {
+                        recipient->custom_key = g_strdup((gchar *)custom_key);
+                        xmlFree(custom_key);
+                    }
+                    if (custom_value) {
+                        recipient->custom_value = g_strdup((gchar *)custom_value);
+                        xmlFree(custom_value);
+                    }
+                    
+                    value->recipients = g_list_append(value->recipients, recipient);
+                    g_print("  Found value recipient: %s (%s) - %d%% split\n",
+                            recipient->name ? recipient->name : "Unknown",
+                            recipient->address ? recipient->address : "No address",
+                            recipient->split);
+                }
+                recipient_node = recipient_node->next;
+            }
+            
+            if (value->type && value->method) {
+                podcast->value = g_list_append(podcast->value, value);
+                g_print("Found podcast value: type=%s, method=%s, suggested=%s\n", 
+                        value->type ? value->type : "None",
+                        value->method ? value->method : "None",
+                        value->suggested ? value->suggested : "None");
+            } else {
+                podcast_value_free(value);
+            }
+        }
+        value_node = value_node->next;
     }
     
     xmlFreeDoc(doc);
@@ -790,6 +929,101 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
                 episode_image_node = episode_image_node->next;
             }
             
+            /* Look for <podcast:value> elements */
+            xmlNodePtr episode_value_node = item->children;
+            while (episode_value_node) {
+                if (episode_value_node->type == XML_ELEMENT_NODE && 
+                    xmlStrcmp(episode_value_node->name, (const xmlChar *)"value") == 0 &&
+                    episode_value_node->ns && xmlStrcmp(episode_value_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
+                    
+                    PodcastValue *value = g_new0(PodcastValue, 1);
+                    
+                    xmlChar *type = xmlGetProp(episode_value_node, (const xmlChar *)"type");
+                    xmlChar *method = xmlGetProp(episode_value_node, (const xmlChar *)"method");
+                    xmlChar *suggested = xmlGetProp(episode_value_node, (const xmlChar *)"suggested");
+                    
+                    if (type) {
+                        value->type = g_strdup((gchar *)type);
+                        xmlFree(type);
+                    }
+                    if (method) {
+                        value->method = g_strdup((gchar *)method);
+                        xmlFree(method);
+                    }
+                    if (suggested) {
+                        value->suggested = g_strdup((gchar *)suggested);
+                        xmlFree(suggested);
+                    }
+                    
+                    /* Parse valueRecipient child elements */
+                    value->recipients = NULL;
+                    xmlNodePtr recipient_node = episode_value_node->children;
+                    while (recipient_node) {
+                        if (recipient_node->type == XML_ELEMENT_NODE && 
+                            xmlStrcmp(recipient_node->name, (const xmlChar *)"valueRecipient") == 0 &&
+                            recipient_node->ns && xmlStrcmp(recipient_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
+                            
+                            ValueRecipient *recipient = g_new0(ValueRecipient, 1);
+                            
+                            xmlChar *name = xmlGetProp(recipient_node, (const xmlChar *)"name");
+                            xmlChar *type = xmlGetProp(recipient_node, (const xmlChar *)"type");
+                            xmlChar *address = xmlGetProp(recipient_node, (const xmlChar *)"address");
+                            xmlChar *split_str = xmlGetProp(recipient_node, (const xmlChar *)"split");
+                            xmlChar *fee_str = xmlGetProp(recipient_node, (const xmlChar *)"fee");
+                            xmlChar *custom_key = xmlGetProp(recipient_node, (const xmlChar *)"customKey");
+                            xmlChar *custom_value = xmlGetProp(recipient_node, (const xmlChar *)"customValue");
+                            
+                            if (name) {
+                                recipient->name = g_strdup((gchar *)name);
+                                xmlFree(name);
+                            }
+                            if (type) {
+                                recipient->type = g_strdup((gchar *)type);
+                                xmlFree(type);
+                            }
+                            if (address) {
+                                recipient->address = g_strdup((gchar *)address);
+                                xmlFree(address);
+                            }
+                            if (split_str) {
+                                recipient->split = atoi((gchar *)split_str);
+                                xmlFree(split_str);
+                            }
+                            if (fee_str) {
+                                recipient->fee = (xmlStrcmp(fee_str, (const xmlChar *)"true") == 0);
+                                xmlFree(fee_str);
+                            }
+                            if (custom_key) {
+                                recipient->custom_key = g_strdup((gchar *)custom_key);
+                                xmlFree(custom_key);
+                            }
+                            if (custom_value) {
+                                recipient->custom_value = g_strdup((gchar *)custom_value);
+                                xmlFree(custom_value);
+                            }
+                            
+                            value->recipients = g_list_append(value->recipients, recipient);
+                            g_print("    Found episode value recipient: %s (%s) - %d%% split\n",
+                                    recipient->name ? recipient->name : "Unknown",
+                                    recipient->address ? recipient->address : "No address",
+                                    recipient->split);
+                        }
+                        recipient_node = recipient_node->next;
+                    }
+                    
+                    if (value->type && value->method) {
+                        episode->value = g_list_append(episode->value, value);
+                        g_print("Found episode value: type=%s, method=%s, suggested=%s\n", 
+                                value->type ? value->type : "None",
+                                value->method ? value->method : "None",
+                                value->suggested ? value->suggested : "None");
+                    } else {
+                        podcast_value_free(value);
+                    }
+                }
+                episode_value_node = episode_value_node->next;
+            }
+            
             episodes = g_list_append(episodes, episode);
         }
         item = item->next;
@@ -841,6 +1075,11 @@ gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_ur
         database_save_podcast_funding(manager->database, podcast_id, podcast->funding);
     }
     
+    /* Save podcast value information if available */
+    if (podcast->value) {
+        database_save_podcast_value(manager->database, podcast_id, podcast->value);
+    }
+    
     /* Fetch and parse episodes */
     gchar *xml_data = fetch_url(feed_url);
     if (xml_data) {
@@ -861,6 +1100,11 @@ gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_ur
             /* Save funding information if available */
             if (episode_id > 0 && episode->funding) {
                 database_save_episode_funding(manager->database, episode_id, episode->funding);
+            }
+            
+            /* Save value information if available */
+            if (episode_id > 0 && episode->value) {
+                database_save_episode_value(manager->database, episode_id, episode->value);
             }
         }
         
@@ -910,6 +1154,15 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
         }
         podcast->funding = g_list_copy_deep(updated_podcast->funding, (GCopyFunc)podcast_funding_copy, NULL);
     }
+    if (updated_podcast && updated_podcast->value) {
+        database_save_podcast_value(manager->database, podcast_id, updated_podcast->value);
+        
+        /* Update the in-memory podcast value */
+        if (podcast->value) {
+            g_list_free_full(podcast->value, (GDestroyNotify)podcast_value_free);
+        }
+        podcast->value = g_list_copy_deep(updated_podcast->value, (GCopyFunc)podcast_value_copy, NULL);
+    }
     if (updated_podcast) {
         podcast_free(updated_podcast);
     }
@@ -943,6 +1196,11 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
         /* Save funding information if available */
         if (episode_id > 0 && episode->funding) {
             database_save_episode_funding(manager->database, episode_id, episode->funding);
+        }
+        
+        /* Save value information if available */
+        if (episode_id > 0 && episode->value) {
+            database_save_episode_value(manager->database, episode_id, episode->value);
         }
     }
     

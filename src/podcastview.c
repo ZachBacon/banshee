@@ -5,6 +5,7 @@
 static void on_chapters_button_clicked(GtkButton *button, gpointer user_data);
 static void on_transcript_button_clicked(GtkButton *button, gpointer user_data);
 static void on_support_button_clicked(GtkButton *button, gpointer user_data);
+static void on_value_button_clicked(GtkButton *button, gpointer user_data);
 static void on_chapter_seek(gpointer user_data, gdouble time);
 static void on_funding_url_clicked(GtkWidget *button, gpointer user_data);
 static void on_cancel_button_clicked(GtkButton *button, gpointer user_data);
@@ -31,6 +32,22 @@ static void update_support_button_text(PodcastView *view) {
         }
     } else {
         gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), button_text);
+    }
+}
+
+/* Helper function to update value button text based on current value tags */
+static void update_value_button_text(PodcastView *view) {
+    if (!view->value_button || !view->current_value) return;
+    
+    PodcastValue *value = (PodcastValue*)view->current_value->data;
+    if (value) {
+        gchar *button_text = g_strdup_printf("⚡ %s (%d recipients)", 
+                                           value->type ? value->type : "Lightning",
+                                           g_list_length(value->recipients));
+        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->value_button), button_text);
+        g_free(button_text);
+    } else {
+        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->value_button), "⚡ Value");
     }
 }
 
@@ -86,6 +103,25 @@ static void on_podcast_selection_changed(GtkTreeSelection *selection, gpointer u
             gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), "Support");
         }
         
+        /* Load podcast value information and enable/disable value button */
+        if (podcast && podcast->value) {
+            /* Set current value to podcast-level value */
+            if (view->current_value) {
+                g_list_free_full(view->current_value, (GDestroyNotify)podcast_value_free);
+            }
+            view->current_value = g_list_copy_deep(podcast->value, (GCopyFunc)podcast_value_copy, NULL);
+            gtk_widget_set_sensitive(view->value_button, TRUE);
+            update_value_button_text(view);
+        } else {
+            /* No podcast-level value, disable value button for now */
+            if (view->current_value) {
+                g_list_free_full(view->current_value, (GDestroyNotify)podcast_value_free);
+                view->current_value = NULL;
+            }
+            gtk_widget_set_sensitive(view->value_button, FALSE);
+            gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->value_button), "⚡ Value");
+        }
+        
         if (podcast) {
             podcast_free(podcast);
         }
@@ -132,6 +168,33 @@ static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer u
             }
         }
         
+        /* Handle Value 4 Value information */
+        if (episode && episode->value) {
+            /* Episode has its own value info, use that instead of podcast-level value */
+            if (view->current_value) {
+                g_list_free_full(view->current_value, (GDestroyNotify)podcast_value_free);
+            }
+            view->current_value = g_list_copy_deep(episode->value, (GCopyFunc)podcast_value_copy, NULL);
+            gtk_widget_set_sensitive(view->value_button, TRUE);
+            update_value_button_text(view);
+        } else if (!view->current_value || g_list_length(view->current_value) == 0) {
+            /* No episode value and no current podcast value, check podcast value */
+            if (view->selected_podcast_id > 0) {
+                Podcast *podcast = database_get_podcast_by_id(view->database, view->selected_podcast_id);
+                if (podcast && podcast->value) {
+                    if (view->current_value) {
+                        g_list_free_full(view->current_value, (GDestroyNotify)podcast_value_free);
+                    }
+                    view->current_value = g_list_copy_deep(podcast->value, (GCopyFunc)podcast_value_copy, NULL);
+                    gtk_widget_set_sensitive(view->value_button, TRUE);
+                    update_value_button_text(view);
+                }
+                if (podcast) {
+                    podcast_free(podcast);
+                }
+            }
+        }
+        
         if (episode) {
             podcast_episode_free(episode);
         }
@@ -140,6 +203,12 @@ static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer u
         if (view->funding_popover) {
             gtk_widget_destroy(view->funding_popover);
             view->funding_popover = NULL;
+        }
+        
+        /* Clear value popover to force recreation with new value data */
+        if (view->value_popover) {
+            gtk_widget_destroy(view->value_popover);
+            view->value_popover = NULL;
         }
     } else {
         /* No episode selected, revert to podcast-level funding if available */
@@ -160,6 +229,24 @@ static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer u
                 gtk_widget_set_sensitive(view->support_button, FALSE);
                 gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), "Support");
             }
+            
+            /* Handle podcast-level value info */
+            if (podcast && podcast->value) {
+                if (view->current_value) {
+                    g_list_free_full(view->current_value, (GDestroyNotify)podcast_value_free);
+                }
+                view->current_value = g_list_copy_deep(podcast->value, (GCopyFunc)podcast_value_copy, NULL);
+                gtk_widget_set_sensitive(view->value_button, TRUE);
+                update_value_button_text(view);
+            } else {
+                if (view->current_value) {
+                    g_list_free_full(view->current_value, (GDestroyNotify)podcast_value_free);
+                    view->current_value = NULL;
+                }
+                gtk_widget_set_sensitive(view->value_button, FALSE);
+                gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->value_button), "⚡ Value");
+            }
+            
             if (podcast) {
                 podcast_free(podcast);
             }
@@ -594,6 +681,149 @@ static void on_support_button_clicked(GtkButton *button, gpointer user_data) {
     gtk_popover_popup(GTK_POPOVER(view->funding_popover));
 }
 
+static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    
+    if (!view->current_value) {
+        return;
+    }
+    
+    /* Create popover if it doesn't exist */
+    if (!view->value_popover) {
+        GtkWidget *value_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+        gtk_widget_set_margin_start(value_box, 15);
+        gtk_widget_set_margin_end(value_box, 15);
+        gtk_widget_set_margin_top(value_box, 15);
+        gtk_widget_set_margin_bottom(value_box, 15);
+        
+        GtkWidget *title_label = gtk_label_new("⚡ Lightning Network - Value 4 Value");
+        gtk_widget_set_halign(title_label, GTK_ALIGN_START);
+        PangoAttrList *attrs = pango_attr_list_new();
+        pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
+        gtk_label_set_attributes(GTK_LABEL(title_label), attrs);
+        pango_attr_list_unref(attrs);
+        gtk_box_pack_start(GTK_BOX(value_box), title_label, FALSE, FALSE, 0);
+        
+        for (GList *l = view->current_value; l != NULL; l = l->next) {
+            PodcastValue *value = (PodcastValue *)l->data;
+            
+            /* Value info header */
+            GtkWidget *value_info = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+            
+            GtkWidget *method_label = gtk_label_new(NULL);
+            gchar *method_text = g_strdup_printf("<b>Method:</b> %s", value->method ? value->method : "Unknown");
+            gtk_label_set_markup(GTK_LABEL(method_label), method_text);
+            g_free(method_text);
+            gtk_box_pack_start(GTK_BOX(value_info), method_label, FALSE, FALSE, 0);
+            
+            if (value->suggested) {
+                GtkWidget *suggested_label = gtk_label_new(NULL);
+                gchar *suggested_text = g_strdup_printf("<b>Suggested:</b> %s sats", value->suggested);
+                gtk_label_set_markup(GTK_LABEL(suggested_label), suggested_text);
+                g_free(suggested_text);
+                gtk_box_pack_end(GTK_BOX(value_info), suggested_label, FALSE, FALSE, 0);
+            }
+            
+            gtk_box_pack_start(GTK_BOX(value_box), value_info, FALSE, FALSE, 5);
+            
+            /* Recipients */
+            if (value->recipients) {
+                GtkWidget *recipients_label = gtk_label_new("<b>Recipients:</b>");
+                gtk_label_set_markup(GTK_LABEL(recipients_label), "<b>Recipients:</b>");
+                gtk_widget_set_halign(recipients_label, GTK_ALIGN_START);
+                gtk_box_pack_start(GTK_BOX(value_box), recipients_label, FALSE, FALSE, 5);
+                
+                gint total_split = 0;
+                for (GList *r = value->recipients; r != NULL; r = r->next) {
+                    ValueRecipient *recipient = (ValueRecipient *)r->data;
+                    total_split += recipient->split;
+                    
+                    GtkWidget *recipient_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+                    gtk_widget_set_margin_start(recipient_box, 20);
+                    
+                    /* Recipient name and split */
+                    GtkWidget *name_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+                    
+                    GtkWidget *name_label = gtk_label_new(recipient->name ? recipient->name : "Unknown");
+                    PangoAttrList *name_attrs = pango_attr_list_new();
+                    pango_attr_list_insert(name_attrs, pango_attr_weight_new(PANGO_WEIGHT_SEMIBOLD));
+                    gtk_label_set_attributes(GTK_LABEL(name_label), name_attrs);
+                    pango_attr_list_unref(name_attrs);
+                    gtk_widget_set_halign(name_label, GTK_ALIGN_START);
+                    gtk_box_pack_start(GTK_BOX(name_box), name_label, FALSE, FALSE, 0);
+                    
+                    GtkWidget *split_label = gtk_label_new(NULL);
+                    gchar *split_text = g_strdup_printf("%d%%", recipient->split);
+                    gtk_label_set_markup(GTK_LABEL(split_label), split_text);
+                    g_free(split_text);
+                    gtk_widget_set_halign(split_label, GTK_ALIGN_END);
+                    gtk_box_pack_end(GTK_BOX(name_box), split_label, FALSE, FALSE, 0);
+                    
+                    gtk_box_pack_start(GTK_BOX(recipient_box), name_box, FALSE, FALSE, 0);
+                    
+                    /* Lightning address */
+                    if (recipient->address) {
+                        GtkWidget *address_label = gtk_label_new(recipient->address);
+                        gtk_label_set_ellipsize(GTK_LABEL(address_label), PANGO_ELLIPSIZE_MIDDLE);
+                        gtk_label_set_max_width_chars(GTK_LABEL(address_label), 50);
+                        gtk_widget_set_halign(address_label, GTK_ALIGN_START);
+                        
+                        /* Make address selectable and monospace */
+                        gtk_label_set_selectable(GTK_LABEL(address_label), TRUE);
+                        PangoAttrList *addr_attrs = pango_attr_list_new();
+                        pango_attr_list_insert(addr_attrs, pango_attr_family_new("monospace"));
+                        pango_attr_list_insert(addr_attrs, pango_attr_scale_new(0.85));
+                        gtk_label_set_attributes(GTK_LABEL(address_label), addr_attrs);
+                        pango_attr_list_unref(addr_attrs);
+                        
+                        gtk_box_pack_start(GTK_BOX(recipient_box), address_label, FALSE, FALSE, 0);
+                    }
+                    
+                    /* Custom key/value if present */
+                    if (recipient->custom_key || recipient->custom_value) {
+                        GtkWidget *custom_label = gtk_label_new(NULL);
+                        gchar *custom_text = g_strdup_printf("<i>Custom: %s = %s</i>", 
+                                                           recipient->custom_key ? recipient->custom_key : "?",
+                                                           recipient->custom_value ? recipient->custom_value : "?");
+                        gtk_label_set_markup(GTK_LABEL(custom_label), custom_text);
+                        g_free(custom_text);
+                        gtk_widget_set_halign(custom_label, GTK_ALIGN_START);
+                        gtk_box_pack_start(GTK_BOX(recipient_box), custom_label, FALSE, FALSE, 0);
+                    }
+                    
+                    gtk_box_pack_start(GTK_BOX(value_box), recipient_box, FALSE, FALSE, 2);
+                }
+                
+                /* Show total split validation */
+                if (total_split != 100) {
+                    GtkWidget *warning_label = gtk_label_new(NULL);
+                    gchar *warning_text = g_strdup_printf("<span color='orange'>⚠ Total split: %d%% (should be 100%%)</span>", total_split);
+                    gtk_label_set_markup(GTK_LABEL(warning_label), warning_text);
+                    g_free(warning_text);
+                    gtk_widget_set_halign(warning_label, GTK_ALIGN_START);
+                    gtk_widget_set_margin_top(warning_label, 5);
+                    gtk_box_pack_start(GTK_BOX(value_box), warning_label, FALSE, FALSE, 0);
+                }
+            }
+        }
+        
+        /* Add info text */
+        GtkWidget *info_label = gtk_label_new("<i>Use a Value 4 Value enabled podcast app\nto send Lightning Network micropayments</i>");
+        gtk_label_set_markup(GTK_LABEL(info_label), "<i>Use a Value 4 Value enabled podcast app\nto send Lightning Network micropayments</i>");
+        gtk_widget_set_halign(info_label, GTK_ALIGN_CENTER);
+        gtk_widget_set_margin_top(info_label, 10);
+        gtk_box_pack_start(GTK_BOX(value_box), info_label, FALSE, FALSE, 0);
+        
+        view->value_popover = gtk_popover_new(view->value_button);
+        gtk_container_add(GTK_CONTAINER(view->value_popover), value_box);
+        gtk_widget_set_size_request(value_box, 450, -1);
+    }
+    
+    gtk_widget_show_all(view->value_popover);
+    gtk_popover_popup(GTK_POPOVER(view->value_popover));
+}
+
 PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     PodcastView *view = g_new0(PodcastView, 1);
     view->podcast_manager = manager;
@@ -609,10 +839,12 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     view->chapter_popover = NULL;
     view->transcript_popover = NULL;
     view->funding_popover = NULL;
+    view->value_popover = NULL;
     view->current_chapters = NULL;
     view->current_transcript_url = NULL;
     view->current_transcript_type = NULL;
     view->current_funding = NULL;
+    view->current_value = NULL;
     
     /* Initialize callbacks */
     view->play_callback = NULL;
@@ -676,6 +908,12 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     gtk_widget_set_sensitive(view->support_button, FALSE);  /* Disabled until funding available */
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->support_button), -1);
     g_signal_connect(view->support_button, "clicked", G_CALLBACK(on_support_button_clicked), view);
+    
+    view->value_button = GTK_WIDGET(gtk_tool_button_new(NULL, "⚡ Value"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->value_button), "weather-storm-symbolic");
+    gtk_widget_set_sensitive(view->value_button, FALSE);  /* Disabled until value tags available */
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->value_button), -1);
+    g_signal_connect(view->value_button, "clicked", G_CALLBACK(on_value_button_clicked), view);
     
     gtk_box_pack_start(GTK_BOX(view->container), toolbar, FALSE, FALSE, 0);
     
@@ -787,6 +1025,9 @@ void podcast_view_free(PodcastView *view) {
     g_free(view->current_transcript_type);
     if (view->current_funding) {
         g_list_free_full(view->current_funding, (GDestroyNotify)podcast_funding_free);
+    }
+    if (view->current_value) {
+        g_list_free_full(view->current_value, (GDestroyNotify)podcast_value_free);
     }
     
     /* Clean up download progress tracking */
