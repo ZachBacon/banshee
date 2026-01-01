@@ -95,11 +95,22 @@ static const char *CREATE_PODCAST_EPISODES_TABLE =
     "UNIQUE(podcast_id, guid)"
     ");";
 
+static const char *CREATE_FUNDING_TABLE =
+    "CREATE TABLE IF NOT EXISTS episode_funding ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "episode_id INTEGER,"
+    "url TEXT NOT NULL,"
+    "message TEXT,"
+    "platform TEXT,"
+    "FOREIGN KEY(episode_id) REFERENCES podcast_episodes(id) ON DELETE CASCADE"
+    ");";
+
 static const char *CREATE_PREFERENCES_TABLE =
     "CREATE TABLE IF NOT EXISTS preferences ("
     "key TEXT PRIMARY KEY,"
     "value TEXT"
     ");";
+
 
 Database* database_new(const gchar *db_path) {
     Database *db = g_new0(Database, 1);
@@ -175,6 +186,14 @@ gboolean database_init_tables(Database *db) {
     
     /* Create podcast_episodes table */
     rc = sqlite3_exec(db->db, CREATE_PODCAST_EPISODES_TABLE, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_printerr("SQL error: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    
+    /* Create episode_funding table */
+    rc = sqlite3_exec(db->db, CREATE_FUNDING_TABLE, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
         g_printerr("SQL error: %s\n", err_msg);
         sqlite3_free(err_msg);
@@ -781,12 +800,19 @@ gint database_add_podcast(Database *db, const gchar *title, const gchar *feed_ur
 
 gint database_add_podcast_episode(Database *db, gint podcast_id, const gchar *guid, const gchar *title,
                                   const gchar *description, const gchar *enclosure_url, gint64 enclosure_length,
-                                  const gchar *enclosure_type, gint64 published_date, gint duration) {
+                                  const gchar *enclosure_type, gint64 published_date, gint duration,
+                                  const gchar *chapters_url, const gchar *chapters_type,
+                                  const gchar *transcript_url, const gchar *transcript_type) {
     if (!db || !db->db) return -1;
     
-    const char *sql = "INSERT OR IGNORE INTO podcast_episodes "
-                      "(podcast_id, guid, title, description, enclosure_url, enclosure_length, enclosure_type, published_date, duration) "
-                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
+    const char *sql = "INSERT INTO podcast_episodes "
+                      "(podcast_id, guid, title, description, enclosure_url, enclosure_length, enclosure_type, published_date, duration, "
+                      "chapters_url, chapters_type, transcript_url, transcript_type) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                      "ON CONFLICT(podcast_id, guid) DO UPDATE SET "
+                      "title=excluded.title, description=excluded.description, "
+                      "chapters_url=excluded.chapters_url, chapters_type=excluded.chapters_type, "
+                      "transcript_url=excluded.transcript_url, transcript_type=excluded.transcript_type;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -801,6 +827,10 @@ gint database_add_podcast_episode(Database *db, gint podcast_id, const gchar *gu
     sqlite3_bind_text(stmt, 7, enclosure_type, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 8, published_date);
     sqlite3_bind_int(stmt, 9, duration);
+    sqlite3_bind_text(stmt, 10, chapters_url, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 11, chapters_type, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 12, transcript_url, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 13, transcript_type, -1, SQLITE_TRANSIENT);
     
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -813,7 +843,8 @@ GList* database_get_podcast_episodes(Database *db, gint podcast_id) {
     if (!db || !db->db) return NULL;
     
     const char *sql = "SELECT id, guid, title, description, enclosure_url, enclosure_length, enclosure_type, "
-                      "published_date, duration, downloaded, local_file_path, play_position, played "
+                      "published_date, duration, downloaded, local_file_path, play_position, played, "
+                      "chapters_url, chapters_type, transcript_url, transcript_type "
                       "FROM podcast_episodes WHERE podcast_id = ? ORDER BY published_date DESC;";
     
     sqlite3_stmt *stmt;
@@ -839,12 +870,57 @@ GList* database_get_podcast_episodes(Database *db, gint podcast_id) {
         episode->local_file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 10));
         episode->play_position = sqlite3_column_int(stmt, 11);
         episode->played = sqlite3_column_int(stmt, 12);
+        episode->chapters_url = g_strdup((const gchar *)sqlite3_column_text(stmt, 13));
+        episode->chapters_type = g_strdup((const gchar *)sqlite3_column_text(stmt, 14));
+        episode->transcript_url = g_strdup((const gchar *)sqlite3_column_text(stmt, 15));
+        episode->transcript_type = g_strdup((const gchar *)sqlite3_column_text(stmt, 16));
         
         episodes = g_list_append(episodes, episode);
     }
     
     sqlite3_finalize(stmt);
     return episodes;
+}
+
+PodcastEpisode* database_get_episode_by_id(Database *db, gint episode_id) {
+    if (!db || !db->db || episode_id <= 0) return NULL;
+    
+    const char *sql = "SELECT id, podcast_id, guid, title, description, enclosure_url, enclosure_length, enclosure_type, "
+                      "published_date, duration, downloaded, local_file_path, play_position, played, "
+                      "chapters_url, chapters_type, transcript_url, transcript_type "
+                      "FROM podcast_episodes WHERE id = ?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return NULL;
+    
+    sqlite3_bind_int(stmt, 1, episode_id);
+    
+    PodcastEpisode *episode = NULL;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        episode = g_new0(PodcastEpisode, 1);
+        episode->id = sqlite3_column_int(stmt, 0);
+        episode->podcast_id = sqlite3_column_int(stmt, 1);
+        episode->guid = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        episode->title = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
+        episode->description = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
+        episode->enclosure_url = g_strdup((const gchar *)sqlite3_column_text(stmt, 5));
+        episode->enclosure_length = sqlite3_column_int64(stmt, 6);
+        episode->enclosure_type = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        episode->published_date = sqlite3_column_int64(stmt, 8);
+        episode->duration = sqlite3_column_int(stmt, 9);
+        episode->downloaded = sqlite3_column_int(stmt, 10);
+        episode->local_file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 11));
+        episode->play_position = sqlite3_column_int(stmt, 12);
+        episode->played = sqlite3_column_int(stmt, 13);
+        episode->chapters_url = g_strdup((const gchar *)sqlite3_column_text(stmt, 14));
+        episode->chapters_type = g_strdup((const gchar *)sqlite3_column_text(stmt, 15));
+        episode->transcript_url = g_strdup((const gchar *)sqlite3_column_text(stmt, 16));
+        episode->transcript_type = g_strdup((const gchar *)sqlite3_column_text(stmt, 17));
+    }
+    
+    sqlite3_finalize(stmt);
+    return episode;
 }
 
 GList* database_get_podcasts(Database *db) {
@@ -877,6 +953,87 @@ GList* database_get_podcasts(Database *db) {
     
     sqlite3_finalize(stmt);
     return podcasts;
+}
+
+/* Funding operations */
+gboolean database_save_episode_funding(Database *db, gint episode_id, GList *funding_list) {
+    if (!db || !db->db || episode_id <= 0) return FALSE;
+    
+    /* First, delete existing funding for this episode */
+    const char *delete_sql = "DELETE FROM episode_funding WHERE episode_id = ?;";
+    sqlite3_stmt *delete_stmt;
+    int rc = sqlite3_prepare_v2(db->db, delete_sql, -1, &delete_stmt, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_int(delete_stmt, 1, episode_id);
+        sqlite3_step(delete_stmt);
+        sqlite3_finalize(delete_stmt);
+    }
+    
+    /* Insert new funding entries */
+    if (!funding_list) return TRUE;
+    
+    const char *insert_sql = "INSERT INTO episode_funding (episode_id, url, message, platform) VALUES (?, ?, ?, ?);";
+    
+    for (GList *l = funding_list; l != NULL; l = l->next) {
+        PodcastFunding *funding = (PodcastFunding *)l->data;
+        
+        sqlite3_stmt *stmt;
+        rc = sqlite3_prepare_v2(db->db, insert_sql, -1, &stmt, NULL);
+        if (rc != SQLITE_OK) continue;
+        
+        sqlite3_bind_int(stmt, 1, episode_id);
+        sqlite3_bind_text(stmt, 2, funding->url, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, funding->message, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 4, funding->platform, -1, SQLITE_TRANSIENT);
+        
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    
+    return TRUE;
+}
+
+GList* database_get_episode_funding(Database *db, gint episode_id) {
+    if (!db || !db->db || episode_id <= 0) return NULL;
+    
+    const char *sql = "SELECT url, message, platform FROM episode_funding WHERE episode_id = ?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return NULL;
+    
+    sqlite3_bind_int(stmt, 1, episode_id);
+    
+    GList *funding_list = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        PodcastFunding *funding = g_new0(PodcastFunding, 1);
+        funding->url = g_strdup((const gchar *)sqlite3_column_text(stmt, 0));
+        funding->message = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
+        funding->platform = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        
+        funding_list = g_list_append(funding_list, funding);
+    }
+    
+    sqlite3_finalize(stmt);
+    return funding_list;
+}
+
+gboolean database_update_episode_downloaded(Database *db, gint episode_id, const gchar *local_path) {
+    if (!db || !db->db || episode_id <= 0) return FALSE;
+    
+    const char *sql = "UPDATE podcast_episodes SET downloaded=1, local_file_path=? WHERE id=?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return FALSE;
+    
+    sqlite3_bind_text(stmt, 1, local_path, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, episode_id);
+    
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE);
 }
 
 /* Preference operations */

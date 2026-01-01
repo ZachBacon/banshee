@@ -3,13 +3,13 @@
 
 #include <glib.h>
 #include <gtk/gtk.h>
-#include "database.h"
+#include "database.h"  /* For Database and podcast type forward declarations */
 
 /* Podcast 2.0 namespace support */
 #define PODCAST_NAMESPACE "https://podcastindex.org/namespace/1.0"
 
 /* Podcast structure */
-typedef struct {
+struct Podcast {
     gint id;
     gchar *title;
     gchar *feed_url;
@@ -21,10 +21,10 @@ typedef struct {
     gint64 last_updated;
     gint64 last_fetched;
     gboolean auto_download;
-} Podcast;
+};
 
 /* Episode structure with Podcast 2.0 features */
-typedef struct {
+struct PodcastEpisode {
     gint id;
     gint podcast_id;
     gchar *guid;
@@ -54,7 +54,7 @@ typedef struct {
     gboolean locked;
     gchar *season;
     gchar *episode_num;
-} PodcastEpisode;
+};
 
 /* Podcast Person (host, guest, etc.) */
 typedef struct {
@@ -66,11 +66,11 @@ typedef struct {
 } PodcastPerson;
 
 /* Funding information */
-typedef struct {
+struct PodcastFunding {
     gchar *url;
     gchar *message;
     gchar *platform;  /* Platform name (e.g., "Patreon", "Ko-fi") */
-} PodcastFunding;
+};
 
 /* Value for Value (Lightning Network) */
 typedef struct {

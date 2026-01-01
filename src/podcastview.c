@@ -53,7 +53,24 @@ static void on_add_button_clicked(GtkButton *button, gpointer user_data) {
 static void on_refresh_button_clicked(GtkButton *button, gpointer user_data) {
     PodcastView *view = (PodcastView *)user_data;
     (void)button;
+    
+    /* Update all podcast feeds from the internet */
+    g_print("Refreshing podcast feeds...\n");
+    podcast_manager_update_all_feeds(view->podcast_manager);
+    
+    /* Refresh the UI */
     podcast_view_refresh_podcasts(view);
+    
+    /* If a podcast is selected, refresh its episodes too */
+    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->podcast_listview));
+    GtkTreeModel *model;
+    GtkTreeIter iter;
+    
+    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+        gint podcast_id;
+        gtk_tree_model_get(model, &iter, PODCAST_COL_ID, &podcast_id, -1);
+        podcast_view_refresh_episodes(view, podcast_id);
+    }
 }
 
 static void on_download_button_clicked(GtkButton *button, gpointer user_data) {
@@ -315,9 +332,14 @@ static gboolean on_episode_query_tooltip(GtkWidget *widget, gint x, gint y,
 static void on_chapter_seek(gpointer user_data, gdouble time) {
     PodcastView *view = (PodcastView *)user_data;
     
-    /* If we have a seek callback from the main player, use it */
-    /* For now, just print the seek request */
-    g_print("Seeking to chapter at %.1f seconds\n", time);
+    g_print("Chapter seek requested: %.1f seconds\n", time);
+    
+    /* Call the seek callback if registered */
+    if (view->seek_callback) {
+        view->seek_callback(view->seek_callback_data, time);
+    } else {
+        g_print("Warning: No seek callback registered\n");
+    }
 }
 
 static void on_chapters_button_clicked(GtkButton *button, gpointer user_data) {
@@ -472,6 +494,12 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     view->current_transcript_url = NULL;
     view->current_transcript_type = NULL;
     view->current_funding = NULL;
+    
+    /* Initialize callbacks */
+    view->play_callback = NULL;
+    view->play_callback_data = NULL;
+    view->seek_callback = NULL;
+    view->seek_callback_data = NULL;
     
     /* Main container */
     view->container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -652,6 +680,12 @@ void podcast_view_set_play_callback(PodcastView *view, EpisodePlayCallback callb
     view->play_callback_data = user_data;
 }
 
+void podcast_view_set_seek_callback(PodcastView *view, SeekCallback callback, gpointer user_data) {
+    if (!view) return;
+    view->seek_callback = callback;
+    view->seek_callback_data = user_data;
+}
+
 GtkWidget* podcast_view_get_widget(PodcastView *view) {
     return view ? view->container : NULL;
 }
@@ -827,26 +861,43 @@ void podcast_view_play_episode(PodcastView *view, gint episode_id) {
             
             /* Load chapters if available */
             GList *chapters = NULL;
+            g_print("Checking for chapters: chapters_url='%s', enclosure_url='%s'\n",
+                    episode->chapters_url ? episode->chapters_url : "(null)",
+                    episode->enclosure_url ? episode->enclosure_url : "(null)");
             if (episode->chapters_url || episode->enclosure_url) {
+                g_print("Calling podcast_episode_get_chapters for episode %d\n", episode_id);
                 chapters = podcast_episode_get_chapters(view->podcast_manager, episode_id);
                 if (chapters) {
                     g_print("Loaded %d chapters for episode\n", g_list_length(chapters));
+                } else {
+                    g_print("podcast_episode_get_chapters returned NULL\n");
                 }
+            } else {
+                g_print("No chapters_url or enclosure_url found for episode\n");
+            }
+            
+            /* Load funding from database */
+            GList *funding = database_get_episode_funding(view->database, episode_id);
+            if (funding) {
+                g_print("Loaded %d funding options for episode\n", g_list_length(funding));
             }
             
             /* Call playback callback if set */
             if (view->play_callback) {
                 view->play_callback(view->play_callback_data, uri, episode->title, chapters, 
-                                  episode->transcript_url, episode->transcript_type, episode->funding);
+                                  episode->transcript_url, episode->transcript_type, funding);
             }
             
             /* Update episode features in the podcast view toolbar */
             podcast_view_update_episode_features(view, chapters, episode->transcript_url, 
-                                               episode->transcript_type, episode->funding);
+                                               episode->transcript_type, funding);
             
-            /* Free chapters (callback should have copied if needed) */
+            /* Free chapters and funding (callback should have copied if needed) */
             if (chapters) {
                 g_list_free_full(chapters, (GDestroyNotify)podcast_chapter_free);
+            }
+            if (funding) {
+                g_list_free_full(funding, (GDestroyNotify)podcast_funding_free);
             }
             
             break;

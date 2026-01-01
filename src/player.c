@@ -256,8 +256,11 @@ gdouble player_get_volume(MediaPlayer *player) {
 gboolean player_seek(MediaPlayer *player, gint64 position) {
     if (!player || !player->playbin) return FALSE;
     
+    /* Use ACCURATE flag for more precise seeking, especially important for chapters.
+     * FLUSH clears the pipeline buffers for immediate seek.
+     * Remove KEY_UNIT to seek to exact position rather than nearest keyframe. */
     gboolean ret = gst_element_seek_simple(player->playbin, GST_FORMAT_TIME,
-                                           GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT,
+                                           GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
                                            position);
     
     if (ret) {

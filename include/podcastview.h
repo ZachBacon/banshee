@@ -10,6 +10,9 @@
 /* Callback for episode playback */
 typedef void (*EpisodePlayCallback)(gpointer user_data, const gchar *uri, const gchar *title, GList *chapters, const gchar *transcript_url, const gchar *transcript_type, GList *funding);
 
+/* Callback for seeking during playback */
+typedef void (*SeekCallback)(gpointer user_data, gdouble time_seconds);
+
 typedef struct {
     GtkWidget *container;
     GtkWidget *paned;
@@ -61,10 +64,16 @@ typedef struct {
     EpisodePlayCallback play_callback;
     gpointer play_callback_data;
     
+    /* Seek callback */
+    SeekCallback seek_callback;
+    gpointer seek_callback_data;
+    
     gint selected_podcast_id;
 } PodcastView;
 
 void podcast_view_set_play_callback(PodcastView *view, EpisodePlayCallback callback, gpointer user_data);
+void podcast_view_set_seek_callback(PodcastView *view, SeekCallback callback, gpointer user_data);
+
 /* Podcast view lifecycle */
 PodcastView* podcast_view_new(PodcastManager *manager, Database *database);
 void podcast_view_free(PodcastView *view);

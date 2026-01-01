@@ -4,6 +4,12 @@
 #include <sqlite3.h>
 #include <glib.h>
 
+/* Forward declarations - these will be fully defined in podcast.h */
+typedef struct PodcastEpisode PodcastEpisode;
+typedef struct Podcast Podcast;
+typedef struct PodcastFunding PodcastFunding;
+typedef struct Database Database;
+
 typedef struct {
     gint id;
     gchar *title;
@@ -23,10 +29,10 @@ typedef struct {
     gint track_count;
 } Playlist;
 
-typedef struct {
+struct Database {
     sqlite3 *db;
     gchar *db_path;
-} Database;
+};
 
 /* Database initialization */
 Database* database_new(const gchar *db_path);
@@ -61,10 +67,18 @@ gint database_add_podcast(Database *db, const gchar *title, const gchar *feed_ur
                           const gchar *description, const gchar *author, const gchar *image_url, const gchar *language);
 gint database_add_podcast_episode(Database *db, gint podcast_id, const gchar *guid, const gchar *title,
                                   const gchar *description, const gchar *enclosure_url, gint64 enclosure_length,
-                                  const gchar *enclosure_type, gint64 published_date, gint duration);
+                                  const gchar *enclosure_type, gint64 published_date, gint duration,
+                                  const gchar *chapters_url, const gchar *chapters_type,
+                                  const gchar *transcript_url, const gchar *transcript_type);
 GList* database_get_podcasts(Database *db);
 GList* database_get_podcast_episodes(Database *db, gint podcast_id);
+PodcastEpisode* database_get_episode_by_id(Database *db, gint episode_id);
 gboolean database_update_episode_progress(Database *db, gint episode_id, gint position, gboolean played);
+gboolean database_update_episode_downloaded(Database *db, gint episode_id, const gchar *local_path);
+
+/* Funding operations */
+gboolean database_save_episode_funding(Database *db, gint episode_id, GList *funding_list);
+GList* database_get_episode_funding(Database *db, gint episode_id);
 
 /* Preference operations */
 gboolean database_set_preference(Database *db, const gchar *key, const gchar *value);
@@ -73,9 +87,7 @@ gint database_get_preference_int(Database *db, const gchar *key, gint default_va
 gboolean database_get_preference_bool(Database *db, const gchar *key, gboolean default_value);
 
 /* Cleanup helpers */
-void track_free(Track *track);
-void playlist_free(Playlist *playlist);
-void database_free_track(Track *track);
 void database_free_playlist(Playlist *playlist);
+void database_free_track(Track *track);
 
 #endif /* DATABASE_H */

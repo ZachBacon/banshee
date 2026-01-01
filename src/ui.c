@@ -488,6 +488,26 @@ static void on_funding_button_clicked(GtkWidget *button, gpointer user_data) {
     gtk_popover_popup(GTK_POPOVER(ui->funding_popover));
 }
 
+static void on_podcast_seek(gpointer user_data, gdouble time_seconds) {
+    MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
+    
+    /* Convert seconds to nanoseconds (GStreamer uses nanoseconds) */
+    gint64 position_ns = (gint64)(time_seconds * GST_SECOND);
+    
+    g_print("Seeking to %.1f seconds (%" G_GINT64_FORMAT " ns)\n", time_seconds, position_ns);
+    
+    /* Seek the player */
+    if (ui->player) {
+        if (player_seek(ui->player, position_ns)) {
+            g_print("Seek successful\n");
+        } else {
+            g_print("Seek failed\n");
+        }
+    } else {
+        g_print("Warning: No player available for seeking\n");
+    }
+}
+
 static void on_podcast_episode_play(gpointer user_data, const gchar *uri, const gchar *title, GList *chapters, 
                                    const gchar *transcript_url, const gchar *transcript_type, GList *funding) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
@@ -1004,6 +1024,9 @@ MediaPlayerUI* ui_new(MediaPlayer *player, Database *database) {
     
     /* Set podcast playback callback */
     podcast_view_set_play_callback(ui->podcast_view, on_podcast_episode_play, ui);
+    
+    /* Set podcast seek callback */
+    podcast_view_set_seek_callback(ui->podcast_view, on_podcast_seek, ui);
     
     /* Initialize chapter view fields */
     ui->chapter_view = NULL;
