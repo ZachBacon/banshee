@@ -367,6 +367,147 @@ void coverart_fetch_async(CoverArtManager *manager, const gchar *artist, const g
     g_thread_new("coverart-fetch", coverart_fetch_thread, fetch);
 }
 
+/* URL-based cover art functions for podcasts */
+gchar* coverart_get_url_cache_path(CoverArtManager *manager, const gchar *url) {
+    if (!manager || !url) return NULL;
+    
+    gchar *encoded = g_compute_checksum_for_string(G_CHECKSUM_MD5, url, -1);
+    gchar *path = g_build_filename(manager->cache_dir, encoded, NULL);
+    g_free(encoded);
+    
+    return path;
+}
+
+gboolean coverart_cache_url_image(CoverArtManager *manager, const gchar *url, GdkPixbuf *pixbuf) {
+    if (!manager || !url || !pixbuf) return FALSE;
+    
+    gchar *path = coverart_get_url_cache_path(manager, url);
+    GError *error = NULL;
+    
+    gboolean success = gdk_pixbuf_save(pixbuf, path, "jpeg", &error, "quality", "90", NULL);
+    
+    if (error) {
+        g_warning("Failed to cache URL image: %s", error->message);
+        g_error_free(error);
+    } else {
+        g_mutex_lock(&manager->cache_mutex);
+        g_hash_table_insert(manager->cache, g_strdup(url), g_object_ref(pixbuf));
+        g_mutex_unlock(&manager->cache_mutex);
+    }
+    
+    g_free(path);
+    return success;
+}
+
+/* Forward declaration for external fetch_binary_url function from podcast.c */
+extern gchar* fetch_binary_url(const gchar *url, gsize *out_size);
+
+GdkPixbuf* coverart_get_from_url(CoverArtManager *manager, const gchar *url, gint size) {
+    if (!manager || !url) return NULL;
+    
+    /* Check memory cache first */
+    g_mutex_lock(&manager->cache_mutex);
+    GdkPixbuf *cached = g_hash_table_lookup(manager->cache, url);
+    if (cached) {
+        g_object_ref(cached);
+        g_mutex_unlock(&manager->cache_mutex);
+        return cached;
+    }
+    g_mutex_unlock(&manager->cache_mutex);
+    
+    /* Check disk cache */
+    gchar *cache_path = coverart_get_url_cache_path(manager, url);
+    GdkPixbuf *pixbuf = NULL;
+    
+    if (g_file_test(cache_path, G_FILE_TEST_EXISTS)) {
+        GError *error = NULL;
+        pixbuf = gdk_pixbuf_new_from_file_at_scale(cache_path, size, size, TRUE, &error);
+        if (error) {
+            g_warning("Failed to load cached image: %s", error->message);
+            g_error_free(error);
+        } else {
+            g_mutex_lock(&manager->cache_mutex);
+            g_hash_table_insert(manager->cache, g_strdup(url), g_object_ref(pixbuf));
+            g_mutex_unlock(&manager->cache_mutex);
+        }
+        g_free(cache_path);
+        return pixbuf;
+    }
+    
+    /* Download image from URL */
+    gsize data_size = 0;
+    gchar *image_data = fetch_binary_url(url, &data_size);
+    if (image_data && data_size > 0) {
+        GInputStream *stream = g_memory_input_stream_new_from_data(
+            image_data, data_size, g_free);
+        
+        GError *error = NULL;
+        pixbuf = gdk_pixbuf_new_from_stream_at_scale(stream, size, size, TRUE, NULL, &error);
+        
+        if (error) {
+            g_warning("Failed to create pixbuf from URL data: %s", error->message);
+            g_error_free(error);
+        } else {
+            /* Cache the image */
+            coverart_cache_url_image(manager, url, pixbuf);
+        }
+        
+        g_object_unref(stream);
+        /* image_data freed by g_memory_input_stream_new_from_data */
+    }
+    
+    g_free(cache_path);
+    return pixbuf;
+}
+
+typedef struct {
+    CoverArtManager *manager;
+    gchar *url;
+    gint size;
+    CoverArtFetchCallback callback;
+    gpointer user_data;
+} URLFetchData;
+
+static gpointer coverart_fetch_url_thread(gpointer data) {
+    URLFetchData *fetch = (URLFetchData *)data;
+    
+    GdkPixbuf *pixbuf = coverart_get_from_url(fetch->manager, fetch->url, fetch->size);
+    
+    if (!pixbuf) {
+        pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, fetch->size, fetch->size);
+        gdk_pixbuf_fill(pixbuf, 0x333333FF);
+    }
+    
+    if (fetch->callback && pixbuf) {
+        CallbackData *cb_data = g_new0(CallbackData, 1);
+        cb_data->callback = fetch->callback;
+        cb_data->pixbuf = pixbuf;  /* Transfer ownership */
+        cb_data->user_data = fetch->user_data;
+        g_main_context_invoke(NULL, invoke_callback_in_main, cb_data);
+    } else if (pixbuf) {
+        g_object_unref(pixbuf);
+    }
+    
+    g_free(fetch->url);
+    g_free(fetch);
+    
+    return NULL;
+}
+
+void coverart_fetch_from_url_async(CoverArtManager *manager, const gchar *url,
+                                   gint size, CoverArtFetchCallback callback, gpointer user_data) {
+    if (!manager || !url) return;
+    
+    URLFetchData *fetch = g_new0(URLFetchData, 1);
+    fetch->manager = manager;
+    fetch->url = g_strdup(url);
+    fetch->size = size;
+    fetch->callback = callback;
+    fetch->user_data = user_data;
+    
+    g_thread_new("coverart-url-fetch", coverart_fetch_url_thread, fetch);
+}
+
 GtkWidget* coverart_widget_new(gint size) {
     GtkWidget *image = gtk_image_new();
     gtk_widget_set_size_request(image, size, size);
@@ -397,4 +538,111 @@ void coverart_widget_set_from_manager(GtkWidget *widget, CoverArtManager *manage
     coverart_widget_set_image(widget, pixbuf);
     
     if (pixbuf) g_object_unref(pixbuf);
+}
+
+typedef struct {
+    GtkWidget *widget;
+    gchar *url;
+    gint size;
+} URLWidgetData;
+
+static gboolean update_widget_with_pixbuf_main_thread(gpointer data) {
+    CallbackData *cb_data = (CallbackData *)data;
+    URLWidgetData *widget_data = (URLWidgetData *)cb_data->user_data;
+    
+    if (GTK_IS_IMAGE(widget_data->widget) && cb_data->pixbuf) {
+        /* Ensure the pixbuf is the right size */
+        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(cb_data->pixbuf, widget_data->size, widget_data->size, GDK_INTERP_BILINEAR);
+        coverart_widget_set_image(widget_data->widget, scaled);
+        g_object_unref(scaled);
+    }
+    
+    /* Cleanup */
+    g_object_unref(widget_data->widget); /* Release our reference */
+    g_free(widget_data->url);
+    g_free(widget_data);
+    
+    if (cb_data->pixbuf) {
+        g_object_unref(cb_data->pixbuf);
+    }
+    g_free(cb_data);
+    return G_SOURCE_REMOVE;
+}
+
+static void widget_url_fetch_callback(GdkPixbuf *pixbuf, gpointer user_data) {
+    URLWidgetData *widget_data = (URLWidgetData *)user_data;
+    
+    CallbackData *cb_data = g_new0(CallbackData, 1);
+    cb_data->pixbuf = pixbuf ? g_object_ref(pixbuf) : NULL;
+    cb_data->user_data = widget_data;
+    
+    g_main_context_invoke(NULL, update_widget_with_pixbuf_main_thread, cb_data);
+}
+
+void coverart_widget_set_from_url(GtkWidget *widget, const gchar *url) {
+    if (!GTK_IS_IMAGE(widget) || !url) return;
+    
+    /* Get the size from the widget's size request */
+    gint width, height;
+    gtk_widget_get_size_request(widget, &width, &height);
+    gint size = (width > 0) ? width : COVER_ART_SIZE_SMALL;
+    
+    /* Set a temporary placeholder while loading */
+    GdkPixbuf *placeholder = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, size, size);
+    gdk_pixbuf_fill(placeholder, 0x4A90E2FF); /* Blue placeholder for podcast images */
+    coverart_widget_set_image(widget, placeholder);
+    g_object_unref(placeholder);
+    
+    /* Prepare data for async fetch */
+    URLWidgetData *widget_data = g_new0(URLWidgetData, 1);
+    widget_data->widget = g_object_ref(widget); /* Keep a reference */
+    widget_data->url = g_strdup(url);
+    widget_data->size = size;
+    
+    /* Start async fetch - use a dummy manager (this could be improved) */
+    static CoverArtManager *dummy_manager = NULL;
+    if (!dummy_manager) {
+        dummy_manager = coverart_manager_new();
+    }
+    
+    /* Use existing async URL fetch */
+    coverart_fetch_from_url_async(dummy_manager, url, size, widget_url_fetch_callback, widget_data);
+}
+
+gboolean coverart_widget_set_from_album(GtkWidget *widget, CoverArtManager *manager,
+                                        const gchar *artist, const gchar *album) {
+    if (!GTK_IS_IMAGE(widget) || !manager) return FALSE;
+    
+    /* Get the size from the widget's size request */
+    gint width, height;
+    gtk_widget_get_size_request(widget, &width, &height);
+    gint size = (width > 0) ? width : COVER_ART_SIZE_SMALL;
+    
+    GdkPixbuf *pixbuf = coverart_get(manager, artist, album, size);
+    
+    if (pixbuf) {
+        /* Ensure the pixbuf is exactly the right size */
+        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, size, size, GDK_INTERP_BILINEAR);
+        coverart_widget_set_image(widget, scaled);
+        g_object_unref(pixbuf);
+        g_object_unref(scaled);
+        return TRUE;
+    }
+    
+    return FALSE;
+}
+
+void coverart_widget_set_default(GtkWidget *widget) {
+    if (!GTK_IS_IMAGE(widget)) return;
+    
+    /* Get the size from the widget's size request */
+    gint width, height;
+    gtk_widget_get_size_request(widget, &width, &height);
+    gint size = (width > 0) ? width : COVER_ART_SIZE_SMALL;
+    
+    GdkPixbuf *pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, size, size);
+    gdk_pixbuf_fill(pixbuf, 0x333333FF); /* Default gray color */
+    
+    coverart_widget_set_image(widget, pixbuf);
+    g_object_unref(pixbuf);
 }

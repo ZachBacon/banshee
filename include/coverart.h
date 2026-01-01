@@ -38,10 +38,21 @@ typedef void (*CoverArtFetchCallback)(GdkPixbuf *pixbuf, gpointer user_data);
 void coverart_fetch_async(CoverArtManager *manager, const gchar *artist, const gchar *album, 
                           gint size, CoverArtFetchCallback callback, gpointer user_data);
 
+/* Podcast/URL-based cover art */
+GdkPixbuf* coverart_get_from_url(CoverArtManager *manager, const gchar *url, gint size);
+void coverart_fetch_from_url_async(CoverArtManager *manager, const gchar *url, 
+                                   gint size, CoverArtFetchCallback callback, gpointer user_data);
+gchar* coverart_get_url_cache_path(CoverArtManager *manager, const gchar *url);
+gboolean coverart_cache_url_image(CoverArtManager *manager, const gchar *url, GdkPixbuf *pixbuf);
+
 /* Cover art display widget */
 GtkWidget* coverart_widget_new(gint size);
 void coverart_widget_set_image(GtkWidget *widget, GdkPixbuf *pixbuf);
 void coverart_widget_set_from_manager(GtkWidget *widget, CoverArtManager *manager, 
                                       const gchar *artist, const gchar *album, gint size);
+void coverart_widget_set_from_url(GtkWidget *widget, const gchar *url);
+gboolean coverart_widget_set_from_album(GtkWidget *widget, CoverArtManager *manager, 
+                                        const gchar *artist, const gchar *album);
+void coverart_widget_set_default(GtkWidget *widget);
 
 #endif /* COVERART_H */

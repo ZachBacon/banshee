@@ -22,6 +22,7 @@ struct Podcast {
     gint64 last_fetched;
     gboolean auto_download;
     GList *funding;  /* List of PodcastFunding */
+    GList *images;   /* List of PodcastImage */
 };
 
 /* Episode structure with Podcast 2.0 features */
@@ -49,6 +50,7 @@ struct PodcastEpisode {
     GList *persons;  /* List of PodcastPerson */
     GList *funding;  /* List of PodcastFunding */
     GList *value;    /* List of PodcastValue (Value4Value) */
+    GList *images;   /* List of PodcastImage */
     gchar *location_name;
     gdouble location_lat;
     gdouble location_lon;
@@ -65,6 +67,17 @@ typedef struct {
     gchar *img;
     gchar *href;
 } PodcastPerson;
+
+/* Podcast Image (Podcast 2.0) */
+typedef struct {
+    gchar *href;           /* Required: URL to the image */
+    gchar *alt;            /* Recommended: Accessibility text */
+    gchar *aspect_ratio;   /* Recommended: e.g., "1/1", "16/9" */
+    gint width;            /* Recommended: Width in pixels */
+    gint height;           /* Optional: Height in pixels */
+    gchar *type;           /* Optional: MIME type */
+    gchar *purpose;        /* Optional: Space-separated tokens */
+} PodcastImage;
 
 /* Funding information */
 struct PodcastFunding {
@@ -161,12 +174,14 @@ PodcastChapter* podcast_chapter_at_time(GList *chapters, gdouble time);
 void podcast_free(Podcast *podcast);
 void podcast_episode_free(PodcastEpisode *episode);
 void podcast_person_free(PodcastPerson *person);
+void podcast_image_free(PodcastImage *image);
 void podcast_funding_free(PodcastFunding *funding);
 void podcast_value_free(PodcastValue *value);
 void podcast_chapter_free(PodcastChapter *chapter);
 
 /* Copy functions for deep copying */
 PodcastChapter* podcast_chapter_copy(const PodcastChapter *chapter);
+PodcastImage* podcast_image_copy(const PodcastImage *image);
 PodcastFunding* podcast_funding_copy(const PodcastFunding *funding);
 
 /* RSS Feed parsing */
@@ -175,5 +190,11 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id);
 
 /* HTTP fetching utility */
 gchar* fetch_url(const gchar *url);
+gchar* fetch_binary_url(const gchar *url, gsize *out_size);
+
+/* Podcast image utilities */
+PodcastImage* podcast_get_best_image(GList *images, const gchar *purpose);
+const gchar* podcast_get_display_image_url(Podcast *podcast);
+const gchar* podcast_episode_get_display_image_url(PodcastEpisode *episode, Podcast *podcast);
 
 #endif /* PODCAST_H */

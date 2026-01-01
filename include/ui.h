@@ -71,6 +71,9 @@ typedef struct {
     GtkWidget *time_label;
     GtkWidget *search_entry;
     
+    /* Header bar cover art */
+    GtkWidget *header_cover_art;
+    
     /* Backend references */
     MediaPlayer *player;
     Database *database;
@@ -90,7 +93,8 @@ void ui_show(MediaPlayerUI *ui);
 
 /* UI updates */
 void ui_update_track_list(MediaPlayerUI *ui, GList *tracks);
-void ui_update_now_playing(MediaPlayerUI *ui, Track *track);
+void ui_update_now_playing(MediaPlayerUI *ui);
+void ui_update_now_playing_podcast(MediaPlayerUI *ui, const gchar *podcast_title, const gchar *episode_title, const gchar *image_url);
 void ui_update_position(MediaPlayerUI *ui, gint64 position, gint64 duration);
 
 /* Callbacks */

@@ -109,6 +109,39 @@ gchar* fetch_url(const gchar *url) {
     return chunk.data;
 }
 
+gchar* fetch_binary_url(const gchar *url, gsize *out_size) {
+    CURL *curl;
+    CURLcode res;
+    MemoryBuffer chunk = {NULL, 0};
+    
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+    
+    if (!curl) return NULL;
+    
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Banshee/1.0 (Podcast 2.0)");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    
+    res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    curl_global_cleanup();
+    
+    if (res != CURLE_OK) {
+        g_free(chunk.data);
+        return NULL;
+    }
+    
+    if (out_size) {
+        *out_size = chunk.size;
+    }
+    
+    return chunk.data;
+}
+
 PodcastManager* podcast_manager_new(Database *database) {
     PodcastManager *manager = g_new0(PodcastManager, 1);
     manager->database = database;
@@ -161,6 +194,7 @@ void podcast_free(Podcast *podcast) {
     g_free(podcast->image_url);
     g_free(podcast->language);
     g_list_free_full(podcast->funding, (GDestroyNotify)podcast_funding_free);
+    g_list_free_full(podcast->images, (GDestroyNotify)podcast_image_free);
     g_free(podcast);
 }
 
@@ -184,6 +218,7 @@ void podcast_episode_free(PodcastEpisode *episode) {
     g_list_free_full(episode->persons, (GDestroyNotify)podcast_person_free);
     g_list_free_full(episode->funding, (GDestroyNotify)podcast_funding_free);
     g_list_free_full(episode->value, (GDestroyNotify)podcast_value_free);
+    g_list_free_full(episode->images, (GDestroyNotify)podcast_image_free);
     
     g_free(episode);
 }
@@ -204,6 +239,16 @@ void podcast_funding_free(PodcastFunding *funding) {
     g_free(funding->message);
     g_free(funding->platform);
     g_free(funding);
+}
+
+void podcast_image_free(PodcastImage *image) {
+    if (!image) return;
+    g_free(image->href);
+    g_free(image->alt);
+    g_free(image->aspect_ratio);
+    g_free(image->type);
+    g_free(image->purpose);
+    g_free(image);
 }
 
 void podcast_value_free(PodcastValue *value) {
@@ -243,6 +288,21 @@ PodcastFunding* podcast_funding_copy(const PodcastFunding *funding) {
     copy->url = g_strdup(funding->url);
     copy->message = g_strdup(funding->message);
     copy->platform = g_strdup(funding->platform);
+    
+    return copy;
+}
+
+PodcastImage* podcast_image_copy(const PodcastImage *image) {
+    if (!image) return NULL;
+    
+    PodcastImage *copy = g_new0(PodcastImage, 1);
+    copy->href = g_strdup(image->href);
+    copy->alt = g_strdup(image->alt);
+    copy->aspect_ratio = g_strdup(image->aspect_ratio);
+    copy->width = image->width;
+    copy->height = image->height;
+    copy->type = g_strdup(image->type);
+    copy->purpose = g_strdup(image->purpose);
     
     return copy;
 }
@@ -361,6 +421,61 @@ Podcast* podcast_parse_feed(const gchar *feed_url) {
             }
         }
         image_node = image_node->next;
+    }
+    
+    /* Parse Podcast 2.0 image tags at channel level */
+    xmlNodePtr podcast_image_node = channel->children;
+    while (podcast_image_node) {
+        if (podcast_image_node->type == XML_ELEMENT_NODE && 
+            xmlStrcmp(podcast_image_node->name, (const xmlChar *)"image") == 0 &&
+            podcast_image_node->ns && xmlStrcmp(podcast_image_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
+            
+            PodcastImage *image = g_new0(PodcastImage, 1);
+            
+            xmlChar *href = xmlGetProp(podcast_image_node, (const xmlChar *)"href");
+            xmlChar *alt = xmlGetProp(podcast_image_node, (const xmlChar *)"alt");
+            xmlChar *aspect_ratio = xmlGetProp(podcast_image_node, (const xmlChar *)"aspect-ratio");
+            xmlChar *width_str = xmlGetProp(podcast_image_node, (const xmlChar *)"width");
+            xmlChar *height_str = xmlGetProp(podcast_image_node, (const xmlChar *)"height");
+            xmlChar *type = xmlGetProp(podcast_image_node, (const xmlChar *)"type");
+            xmlChar *purpose = xmlGetProp(podcast_image_node, (const xmlChar *)"purpose");
+            
+            if (href) {
+                image->href = g_strdup((gchar *)href);
+                xmlFree(href);
+            }
+            if (alt) {
+                image->alt = g_strdup((gchar *)alt);
+                xmlFree(alt);
+            }
+            if (aspect_ratio) {
+                image->aspect_ratio = g_strdup((gchar *)aspect_ratio);
+                xmlFree(aspect_ratio);
+            }
+            if (width_str) {
+                image->width = atoi((gchar *)width_str);
+                xmlFree(width_str);
+            }
+            if (height_str) {
+                image->height = atoi((gchar *)height_str);
+                xmlFree(height_str);
+            }
+            if (type) {
+                image->type = g_strdup((gchar *)type);
+                xmlFree(type);
+            }
+            if (purpose) {
+                image->purpose = g_strdup((gchar *)purpose);
+                xmlFree(purpose);
+            }
+            
+            if (image->href) {
+                podcast->images = g_list_append(podcast->images, image);
+            } else {
+                podcast_image_free(image);
+            }
+        }
+        podcast_image_node = podcast_image_node->next;
     }
     
     /* Parse Podcast 2.0 funding tags at channel level */
@@ -618,6 +733,61 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
                     break;
                 }
                 locked_node = locked_node->next;
+            }
+            
+            /* Look for <podcast:image> elements */
+            xmlNodePtr episode_image_node = item->children;
+            while (episode_image_node) {
+                if (episode_image_node->type == XML_ELEMENT_NODE && 
+                    xmlStrcmp(episode_image_node->name, (const xmlChar *)"image") == 0 &&
+                    episode_image_node->ns && xmlStrcmp(episode_image_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
+                    
+                    PodcastImage *image = g_new0(PodcastImage, 1);
+                    
+                    xmlChar *href = xmlGetProp(episode_image_node, (const xmlChar *)"href");
+                    xmlChar *alt = xmlGetProp(episode_image_node, (const xmlChar *)"alt");
+                    xmlChar *aspect_ratio = xmlGetProp(episode_image_node, (const xmlChar *)"aspect-ratio");
+                    xmlChar *width_str = xmlGetProp(episode_image_node, (const xmlChar *)"width");
+                    xmlChar *height_str = xmlGetProp(episode_image_node, (const xmlChar *)"height");
+                    xmlChar *type = xmlGetProp(episode_image_node, (const xmlChar *)"type");
+                    xmlChar *purpose = xmlGetProp(episode_image_node, (const xmlChar *)"purpose");
+                    
+                    if (href) {
+                        image->href = g_strdup((gchar *)href);
+                        xmlFree(href);
+                    }
+                    if (alt) {
+                        image->alt = g_strdup((gchar *)alt);
+                        xmlFree(alt);
+                    }
+                    if (aspect_ratio) {
+                        image->aspect_ratio = g_strdup((gchar *)aspect_ratio);
+                        xmlFree(aspect_ratio);
+                    }
+                    if (width_str) {
+                        image->width = atoi((gchar *)width_str);
+                        xmlFree(width_str);
+                    }
+                    if (height_str) {
+                        image->height = atoi((gchar *)height_str);
+                        xmlFree(height_str);
+                    }
+                    if (type) {
+                        image->type = g_strdup((gchar *)type);
+                        xmlFree(type);
+                    }
+                    if (purpose) {
+                        image->purpose = g_strdup((gchar *)purpose);
+                        xmlFree(purpose);
+                    }
+                    
+                    if (image->href) {
+                        episode->images = g_list_append(episode->images, image);
+                    } else {
+                        podcast_image_free(image);
+                    }
+                }
+                episode_image_node = episode_image_node->next;
             }
             
             episodes = g_list_append(episodes, episode);
@@ -1191,4 +1361,73 @@ PodcastChapter* podcast_chapter_at_time(GList *chapters, gdouble time) {
     }
     
     return current;
+}
+/* Podcast image utility functions */
+PodcastImage* podcast_get_best_image(GList *images, const gchar *purpose) {
+    if (!images) return NULL;
+    
+    /* If no specific purpose requested, return first image */
+    if (!purpose) {
+        return (PodcastImage *)images->data;
+    }
+    
+    /* Look for image with matching purpose */
+    for (GList *l = images; l != NULL; l = l->next) {
+        PodcastImage *image = (PodcastImage *)l->data;
+        if (image->purpose && strstr(image->purpose, purpose)) {
+            return image;
+        }
+    }
+    
+    /* Look for image with "artwork" purpose as fallback */
+    if (g_strcmp0(purpose, "artwork") != 0) {
+        for (GList *l = images; l != NULL; l = l->next) {
+            PodcastImage *image = (PodcastImage *)l->data;
+            if (image->purpose && strstr(image->purpose, "artwork")) {
+                return image;
+            }
+        }
+    }
+    
+    /* Return first image with square aspect ratio */
+    for (GList *l = images; l != NULL; l = l->next) {
+        PodcastImage *image = (PodcastImage *)l->data;
+        if (image->aspect_ratio && (g_strcmp0(image->aspect_ratio, "1/1") == 0 || 
+                                   g_strcmp0(image->aspect_ratio, "1:1") == 0)) {
+            return image;
+        }
+    }
+    
+    /* Return any image */
+    return (PodcastImage *)images->data;
+}
+
+const gchar* podcast_get_display_image_url(Podcast *podcast) {
+    if (!podcast) return NULL;
+    
+    /* Try Podcast 2.0 images first */
+    if (podcast->images) {
+        PodcastImage *image = podcast_get_best_image(podcast->images, "artwork");
+        if (image && image->href) {
+            return image->href;
+        }
+    }
+    
+    /* Fallback to legacy image URL */
+    return podcast->image_url;
+}
+
+const gchar* podcast_episode_get_display_image_url(PodcastEpisode *episode, Podcast *podcast) {
+    if (!episode) return NULL;
+    
+    /* Try episode-specific images first */
+    if (episode->images) {
+        PodcastImage *image = podcast_get_best_image(episode->images, "artwork");
+        if (image && image->href) {
+            return image->href;
+        }
+    }
+    
+    /* Fallback to podcast-level image */
+    return podcast ? podcast_get_display_image_url(podcast) : NULL;
 }

@@ -32,6 +32,7 @@ static void ui_show_radio_stations(MediaPlayerUI *ui);
 static void on_import_media_clicked(GtkMenuItem *item, gpointer user_data);
 static void on_search_changed(GtkSearchEntry *entry, gpointer user_data);
 static void on_preferences_clicked(GtkMenuItem *item, gpointer user_data);
+static void ui_update_cover_art(MediaPlayerUI *ui, const gchar *artist, const gchar *album, const gchar *podcast_image_url);
 
 static void on_seek_changed(GtkRange *range, gpointer user_data) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
@@ -227,27 +228,39 @@ static GtkWidget* create_headerbar(MediaPlayerUI *ui) {
     
     gtk_header_bar_pack_start(GTK_HEADER_BAR(headerbar), controls_box);
     
-    /* Center - progress bar and media info */
-    GtkWidget *media_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_widget_set_size_request(media_box, 400, -1);
+/* Center - cover art and progress bar with media info */
+    GtkWidget *media_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_size_request(media_box, 450, -1);
+    
+    /* Cover art */
+    ui->header_cover_art = coverart_widget_new(32);
+    gtk_widget_set_halign(ui->header_cover_art, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(ui->header_cover_art, GTK_ALIGN_CENTER);
+    gtk_widget_set_size_request(ui->header_cover_art, 32, 32);
+    gtk_box_pack_start(GTK_BOX(media_box), ui->header_cover_art, FALSE, FALSE, 0);
+    
+    /* Progress and info container */
+    GtkWidget *progress_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     
     ui->seek_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 1);
     gtk_scale_set_draw_value(GTK_SCALE(ui->seek_scale), FALSE);
     g_signal_connect(ui->seek_scale, "value-changed", G_CALLBACK(on_seek_changed), ui);
-    gtk_widget_set_size_request(ui->seek_scale, 350, -1);
-    gtk_box_pack_start(GTK_BOX(media_box), ui->seek_scale, FALSE, FALSE, 0);
-    
+    gtk_widget_set_size_request(ui->seek_scale, 300, -1);
+    gtk_box_pack_start(GTK_BOX(progress_box), ui->seek_scale, FALSE, FALSE, 0);
+
     GtkWidget *info_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     ui->now_playing_label = gtk_label_new("No track playing");
     gtk_widget_set_halign(ui->now_playing_label, GTK_ALIGN_START);
     gtk_label_set_ellipsize(GTK_LABEL(ui->now_playing_label), PANGO_ELLIPSIZE_END);
-    gtk_widget_set_size_request(ui->now_playing_label, 250, -1);
+    gtk_widget_set_size_request(ui->now_playing_label, 200, -1);
     gtk_box_pack_start(GTK_BOX(info_row), ui->now_playing_label, TRUE, TRUE, 0);
-    
+
     ui->time_label = gtk_label_new("00:00 / 00:00");
     gtk_box_pack_end(GTK_BOX(info_row), ui->time_label, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(progress_box), info_row, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(media_box), progress_box, TRUE, TRUE, 0);
     
-    gtk_box_pack_start(GTK_BOX(media_box), info_row, FALSE, FALSE, 0);
     gtk_header_bar_set_custom_title(GTK_HEADER_BAR(headerbar), media_box);
     
     /* Right side - volume and menu */
@@ -387,10 +400,26 @@ static void on_podcast_episode_play(gpointer user_data, const gchar *uri, const 
     player_set_uri(ui->player, uri);
     player_play(ui->player);
     
-    /* Update UI */
-    gchar *status = g_strdup_printf("Playing: %s", title);
-    gtk_label_set_text(GTK_LABEL(ui->now_playing_label), status);
-    g_free(status);
+    /* Get podcast information for cover art */
+    PodcastView *podcast_view = ui->podcast_view;
+    gchar *podcast_title = NULL;
+    const gchar *image_url = NULL;
+    
+    /* Get currently selected podcast */
+    Podcast *current_podcast = podcast_view_get_selected_podcast(podcast_view);
+    if (current_podcast) {
+        podcast_title = g_strdup(current_podcast->title);
+        
+        /* Get the best image URL for this podcast */
+        image_url = podcast_get_display_image_url(current_podcast);
+    }
+    
+    /* Update UI with podcast-specific function */
+    ui_update_now_playing_podcast(ui, podcast_title, title, image_url);
+    
+    /* Cleanup */
+    g_free(podcast_title);
+    /* image_url is const, don't free it */
     
     /* Episode buttons are now in podcast toolbar, not global UI */
     if (chapters && g_list_length(chapters) > 0) {
@@ -909,6 +938,9 @@ void ui_on_track_selected(GtkTreeSelection *selection, gpointer user_data) {
                 gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
                 g_free(label);
                 
+                /* Update cover art for radio (typically no cover) */
+                ui_update_cover_art(ui, NULL, NULL, NULL);
+                
                 radio_station_free(station);
             }
         } else {
@@ -938,6 +970,9 @@ void ui_on_track_selected(GtkTreeSelection *selection, gpointer user_data) {
                                                track->title ? track->title : "Unknown");
                 gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
                 g_free(label);
+                
+                /* Update cover art for this track */
+                ui_update_cover_art(ui, track->artist, track->album, NULL);
                 
                 database_free_track(track);
             }
@@ -978,6 +1013,9 @@ void ui_on_prev_clicked(GtkWidget *widget, gpointer user_data) {
                                            track->title ? track->title : "Unknown");
             gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
             g_free(label);
+            
+            /* Update cover art */
+            ui_update_cover_art(ui, track->artist, track->album, NULL);
         }
     }
 }
@@ -999,6 +1037,9 @@ void ui_on_next_clicked(GtkWidget *widget, gpointer user_data) {
                                                track->title ? track->title : "Unknown");
                 gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
                 g_free(label);
+                
+                /* Update cover art */
+                ui_update_cover_art(ui, track->artist, track->album, NULL);
             }
         }
     }
@@ -1168,4 +1209,78 @@ void ui_show_preferences_dialog(MediaPlayerUI *ui) {
     }
     
     gtk_widget_destroy(dialog);
+}
+
+/* Cover art update functions */
+static void ui_update_cover_art(MediaPlayerUI *ui, const gchar *artist, const gchar *album, const gchar *podcast_image_url) {
+    if (!ui || !ui->header_cover_art) return;
+    
+    /* Try podcast image first if provided */
+    if (podcast_image_url && strlen(podcast_image_url) > 0) {
+        coverart_widget_set_from_url(ui->header_cover_art, podcast_image_url);
+        return;
+    }
+    
+    /* Try album art for music */
+    if (artist && album) {
+        gboolean has_art = coverart_widget_set_from_album(ui->header_cover_art, ui->coverart_manager, artist, album);
+        if (has_art) return;
+    }
+    
+    /* Fall back to default image */
+    coverart_widget_set_default(ui->header_cover_art);
+}
+
+void ui_update_now_playing(MediaPlayerUI *ui) {
+    if (!ui) return;
+    
+    /* Get current track information */
+    Source *active_source = source_manager_get_active(ui->source_manager);
+    if (!active_source) {
+        ui_update_cover_art(ui, NULL, NULL, NULL);
+        return;
+    }
+    
+    if (active_source->type == SOURCE_TYPE_RADIO) {
+        /* Radio station - no cover art typically */
+        ui_update_cover_art(ui, NULL, NULL, NULL);
+    } else {
+        /* Music track - get current selection */
+        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->track_listview));
+        GtkTreeIter iter;
+        GtkTreeModel *model;
+        
+        if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+            gint track_id;
+            gtk_tree_model_get(model, &iter, COL_ID, &track_id, -1);
+            
+            Track *track = database_get_track(ui->database, track_id);
+            if (track) {
+                ui_update_cover_art(ui, track->artist, track->album, NULL);
+                database_free_track(track);
+            } else {
+                ui_update_cover_art(ui, NULL, NULL, NULL);
+            }
+        } else {
+            ui_update_cover_art(ui, NULL, NULL, NULL);
+        }
+    }
+}
+
+void ui_update_now_playing_podcast(MediaPlayerUI *ui, const gchar *podcast_title, const gchar *episode_title, const gchar *image_url) {
+    if (!ui) return;
+    
+    /* Update now playing label */
+    if (podcast_title && episode_title) {
+        gchar *label = g_strdup_printf("%s - %s", podcast_title, episode_title);
+        gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
+        g_free(label);
+    } else if (episode_title) {
+        gtk_label_set_text(GTK_LABEL(ui->now_playing_label), episode_title);
+    } else {
+        gtk_label_set_text(GTK_LABEL(ui->now_playing_label), "Podcast Episode");
+    }
+    
+    /* Update cover art */
+    ui_update_cover_art(ui, NULL, NULL, image_url);
 }

@@ -1308,3 +1308,11 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
     g_hash_table_destroy(podcasts_with_matches);
     g_list_free_full(all_podcasts, (GDestroyNotify)podcast_free);
 }
+
+Podcast* podcast_view_get_selected_podcast(PodcastView *view) {
+    if (!view || view->selected_podcast_id <= 0) {
+        return NULL;
+    }
+    
+    return database_get_podcast_by_id(view->database, view->selected_podcast_id);
+}
