@@ -1141,6 +1141,11 @@ void ui_on_track_selected(GtkTreeSelection *selection, gpointer user_data) {
         gint track_id;
         gtk_tree_model_get(model, &iter, COL_ID, &track_id, -1);
         
+        /* Hide video view if currently showing video (UI only, player will be reused) */
+        if (ui->video_view && video_view_is_showing_video(ui->video_view)) {
+            video_view_hide_video_ui(ui->video_view);
+        }
+        
         /* Check if this is a radio station or a track */
         Source *active_source = source_manager_get_active(ui->source_manager);
         if (active_source && active_source->type == SOURCE_TYPE_RADIO) {
@@ -1514,4 +1519,17 @@ void ui_update_now_playing_podcast(MediaPlayerUI *ui, const gchar *podcast_title
     
     /* Update cover art */
     ui_update_cover_art(ui, NULL, NULL, image_url);
+}
+
+void ui_update_now_playing_video(MediaPlayerUI *ui, const gchar *video_title) {
+    if (!ui) return;
+    
+    /* Update now playing label with video icon prefix */
+    if (video_title) {
+        gchar *label = g_strdup_printf("🎬 %s", video_title);
+        gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
+        g_free(label);
+    } else {
+        gtk_label_set_text(GTK_LABEL(ui->now_playing_label), "🎬 Video");
+    }
 }

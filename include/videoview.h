@@ -13,11 +13,20 @@ typedef struct {
     GtkListStore *video_store;      /* Store for video list */
     GtkWidget *video_widget;        /* Drawing area for video */
     GtkWidget *video_controls;      /* Video controls overlay */
+    GtkWidget *controls_revealer;   /* Revealer for showing/hiding controls */
+    GtkWidget *audio_menu_button;   /* Button for audio stream selection */
+    GtkWidget *subtitle_menu_button; /* Button for subtitle selection */
+    GtkWidget *back_button;         /* Button to go back to video list */
+    GtkWidget *video_title_label;   /* Label showing current video title */
+    GtkWidget *time_label;          /* Label showing current position / duration */
     GtkWidget *overlay_container;   /* The UI overlay container to add video widget to */
     GtkWidget *content_stack;       /* Reference to content stack for switching views */
     Database *database;
     MediaPlayer *player;
     gboolean video_playing;         /* Whether video is currently playing */
+    gboolean controls_visible;      /* Whether controls are visible */
+    guint controls_timeout_id;      /* Timeout for hiding controls */
+    guint position_timeout_id;      /* Timeout for updating position label */
     GtkWidget *scrolled_window;     /* Scrolled window for list */
 } VideoView;
 
@@ -45,6 +54,7 @@ void video_view_set_overlay_container(VideoView *view, GtkWidget *overlay_contai
 void video_view_set_content_stack(VideoView *view, GtkWidget *content_stack);
 void video_view_show_video(VideoView *view);
 void video_view_hide_video(VideoView *view);
+void video_view_hide_video_ui(VideoView *view);  /* Hide UI only, don't stop playback */
 gboolean video_view_is_showing_video(VideoView *view);
 
 /* Selection callback */

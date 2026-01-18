@@ -345,6 +345,43 @@ MediaPlayer* player_new(void) {
         return NULL;
     }
     
+    /* Ensure playbin flags include both audio and video playback BEFORE setting sinks.
+     * GST_PLAY_FLAG_VIDEO (1) | GST_PLAY_FLAG_AUDIO (2) | GST_PLAY_FLAG_TEXT (4) 
+     * Also add SOFT_VOLUME (16) for volume control */
+    gint flags;
+    g_object_get(player->playbin, "flags", &flags, NULL);
+    g_print("Player: Initial playbin flags: 0x%x\n", flags);
+    flags |= (1 << 0) | (1 << 1) | (1 << 4);  /* VIDEO | AUDIO | SOFT_VOLUME */
+    g_object_set(player->playbin, "flags", flags, NULL);
+    g_print("Player: Playbin flags set to 0x%x (video + audio enabled)\n", flags);
+    
+    /* Explicitly set volume to ensure audio is not muted */
+    g_object_set(player->playbin, "volume", 1.0, NULL);
+    g_object_set(player->playbin, "mute", FALSE, NULL);
+    
+    /* Create gtksink for embedded video playback in GTK widget */
+    player->video_sink = gst_element_factory_make("gtksink", "videosink");
+    if (!player->video_sink) {
+        /* Try gtkglsink as fallback for hardware acceleration */
+        player->video_sink = gst_element_factory_make("gtkglsink", "videosink");
+    }
+    if (player->video_sink) {
+        /* Set gtksink as the video sink for playbin - this embeds video in GTK */
+        g_object_set(player->playbin, "video-sink", player->video_sink, NULL);
+        g_print("Player: Using gtksink for embedded video playback\n");
+    } else {
+        g_print("Player: gtksink not available, video will use default sink\n");
+    }
+    
+    /* Create and set an explicit audio sink to ensure audio works with video */
+    GstElement *audio_sink = gst_element_factory_make("autoaudiosink", "audiosink");
+    if (audio_sink) {
+        g_object_set(player->playbin, "audio-sink", audio_sink, NULL);
+        g_print("Player: Using autoaudiosink for audio playback\n");
+    } else {
+        g_print("Player: autoaudiosink not available, using default audio sink\n");
+    }
+    
     /* Create pipeline and bus */
     player->pipeline = player->playbin;
     player->bus = gst_element_get_bus(player->playbin);
@@ -464,9 +501,41 @@ gboolean player_play(MediaPlayer *player) {
     
     player->state = PLAYER_STATE_PLAYING;
     
-    /* Start position timer for UI updates */
+    /* Debug: Print stream information */
+    gint n_video = 0, n_audio = 0, n_text = 0;
+    g_object_get(player->playbin, "n-video", &n_video, "n-audio", &n_audio, "n-text", &n_text, NULL);
+    g_print("Player: Stream info - Video streams: %d, Audio streams: %d, Text streams: %d\n", 
+            n_video, n_audio, n_text);
+    
+    gint current_audio = -1, current_video = -1;
+    g_object_get(player->playbin, "current-audio", &current_audio, "current-video", &current_video, NULL);
+    g_print("Player: Current streams - Video: %d, Audio: %d\n", current_video, current_audio);
+    
+    /* Debug: Check flags again */
+    gint flags = 0;
+    g_object_get(player->playbin, "flags", &flags, NULL);
+    g_print("Player: Current flags: 0x%x (audio bit=%d, video bit=%d)\n", 
+            flags, (flags >> 1) & 1, flags & 1);
+    
+    /* Debug: Check volume and mute state */
+    gdouble vol = 0;
+    gboolean mute = FALSE;
+    g_object_get(player->playbin, "volume", &vol, "mute", &mute, NULL);
+    g_print("Player: Volume: %.2f, Mute: %s\n", vol, mute ? "YES" : "NO");
+    
+    /* If there's audio but it's not selected, select it */
+    if (n_audio > 0 && current_audio < 0) {
+        g_print("Player: No audio stream selected, selecting stream 0\n");
+        g_object_set(player->playbin, "current-audio", 0, NULL);
+    }
+    
+    /* Start position timer for UI updates
+     * Use 250ms interval to reduce UI update overhead during video playback.
+     * This prevents the progress bar updates from causing choppy video. */
     if (position_callback_data && position_timer_id == 0) {
-        position_timer_id = g_timeout_add(100, position_timer_callback, player);  /* Update every 100ms */
+        gboolean is_video = is_current_file_video(player);
+        guint interval = is_video ? 500 : 250;  /* Slower updates for video */
+        position_timer_id = g_timeout_add(interval, position_timer_callback, player);
     }
     
     return TRUE;
@@ -634,19 +703,12 @@ gboolean player_has_video(MediaPlayer *player) {
 }
 
 GtkWidget* player_get_video_widget(MediaPlayer *player) {
-    if (!player || !player->playbin) return NULL;
+    if (!player || !player->video_sink) return NULL;
     
-    /* Get the video sink */
-    GstElement *video_sink = NULL;
-    g_object_get(player->playbin, "video-sink", &video_sink, NULL);
-    
-    if (!video_sink) return NULL;
-    
-    /* Check if it's a gtksink or gtkglsink */
+    /* Get the widget from our stored gtksink reference */
     GtkWidget *widget = NULL;
-    g_object_get(video_sink, "widget", &widget, NULL);
+    g_object_get(player->video_sink, "widget", &widget, NULL);
     
-    gst_object_unref(video_sink);
     return widget;
 }
 
@@ -684,4 +746,173 @@ void player_set_video_widget_ready_callback(MediaPlayer *player, GCallback callb
                                 0);
         }
     }
+}
+
+/* Stream information and selection functions */
+
+gint player_get_audio_stream_count(MediaPlayer *player) {
+    if (!player || !player->playbin) return 0;
+    gint n_audio = 0;
+    g_object_get(player->playbin, "n-audio", &n_audio, NULL);
+    return n_audio;
+}
+
+gint player_get_subtitle_stream_count(MediaPlayer *player) {
+    if (!player || !player->playbin) return 0;
+    gint n_text = 0;
+    g_object_get(player->playbin, "n-text", &n_text, NULL);
+    return n_text;
+}
+
+gint player_get_current_audio_stream(MediaPlayer *player) {
+    if (!player || !player->playbin) return -1;
+    gint current = -1;
+    g_object_get(player->playbin, "current-audio", &current, NULL);
+    return current;
+}
+
+gint player_get_current_subtitle_stream(MediaPlayer *player) {
+    if (!player || !player->playbin) return -1;
+    gint current = -1;
+    g_object_get(player->playbin, "current-text", &current, NULL);
+    return current;
+}
+
+void player_set_audio_stream(MediaPlayer *player, gint index) {
+    if (!player || !player->playbin) return;
+    g_object_set(player->playbin, "current-audio", index, NULL);
+    g_print("Player: Set audio stream to %d\n", index);
+}
+
+void player_set_subtitle_stream(MediaPlayer *player, gint index) {
+    if (!player || !player->playbin) return;
+    g_object_set(player->playbin, "current-text", index, NULL);
+    
+    /* Enable subtitles when selecting a stream */
+    gint flags;
+    g_object_get(player->playbin, "flags", &flags, NULL);
+    flags |= (1 << 2);  /* GST_PLAY_FLAG_TEXT */
+    g_object_set(player->playbin, "flags", flags, NULL);
+    
+    g_print("Player: Set subtitle stream to %d\n", index);
+}
+
+void player_set_subtitles_enabled(MediaPlayer *player, gboolean enabled) {
+    if (!player || !player->playbin) return;
+    
+    gint flags;
+    g_object_get(player->playbin, "flags", &flags, NULL);
+    
+    if (enabled) {
+        flags |= (1 << 2);  /* GST_PLAY_FLAG_TEXT */
+    } else {
+        flags &= ~(1 << 2);
+    }
+    
+    g_object_set(player->playbin, "flags", flags, NULL);
+    g_print("Player: Subtitles %s\n", enabled ? "enabled" : "disabled");
+}
+
+gboolean player_get_subtitles_enabled(MediaPlayer *player) {
+    if (!player || !player->playbin) return FALSE;
+    
+    gint flags;
+    g_object_get(player->playbin, "flags", &flags, NULL);
+    return (flags & (1 << 2)) != 0;
+}
+
+static void debug_print_tag(const GstTagList *list, const gchar *tag, gpointer user_data) {
+    (void)user_data;
+    gchar *str = NULL;
+    if (gst_tag_list_get_string(list, tag, &str)) {
+        g_print("  %s: %s\n", tag, str);
+        g_free(str);
+    }
+}
+
+static gchar* get_tag_string(GstTagList *tags, const gchar *tag) {
+    if (!tags) return NULL;
+    gchar *value = NULL;
+    gst_tag_list_get_string(tags, tag, &value);
+    return value;
+}
+
+StreamInfo* player_get_audio_stream_info(MediaPlayer *player, gint index) {
+    if (!player || !player->playbin) return NULL;
+    
+    gint n_audio = player_get_audio_stream_count(player);
+    if (index < 0 || index >= n_audio) return NULL;
+    
+    StreamInfo *info = g_new0(StreamInfo, 1);
+    info->index = index;
+    
+    /* Get tags for this audio stream */
+    GstTagList *tags = NULL;
+    g_signal_emit_by_name(player->playbin, "get-audio-tags", index, &tags);
+    
+    if (tags) {
+        info->language = get_tag_string(tags, GST_TAG_LANGUAGE_CODE);
+        info->codec = get_tag_string(tags, GST_TAG_AUDIO_CODEC);
+        info->title = get_tag_string(tags, GST_TAG_TITLE);
+        
+        /* If no title, try language name */
+        if (!info->title && info->language) {
+            info->title = g_strdup(info->language);
+        }
+        
+        gst_tag_list_unref(tags);
+    }
+    
+    /* Default title if none found */
+    if (!info->title) {
+        info->title = g_strdup_printf("Audio Track %d", index + 1);
+    }
+    
+    return info;
+}
+
+StreamInfo* player_get_subtitle_stream_info(MediaPlayer *player, gint index) {
+    if (!player || !player->playbin) return NULL;
+    
+    gint n_text = player_get_subtitle_stream_count(player);
+    if (index < 0 || index >= n_text) return NULL;
+    
+    StreamInfo *info = g_new0(StreamInfo, 1);
+    info->index = index;
+    
+    /* Get tags for this subtitle stream */
+    GstTagList *tags = NULL;
+    g_signal_emit_by_name(player->playbin, "get-text-tags", index, &tags);
+    
+    if (tags) {
+        info->language = get_tag_string(tags, GST_TAG_LANGUAGE_CODE);
+        info->codec = get_tag_string(tags, GST_TAG_SUBTITLE_CODEC);
+        info->title = get_tag_string(tags, GST_TAG_TITLE);
+        
+        /* Try LANGUAGE_NAME if available (more human-readable than code) */
+        if (!info->title) {
+            info->title = get_tag_string(tags, GST_TAG_LANGUAGE_NAME);
+        }
+        
+        /* Debug: print all available tags for this stream */
+        g_print("Subtitle stream %d tags:\n", index);
+        gst_tag_list_foreach(tags, (GstTagForeachFunc)debug_print_tag, NULL);
+        
+        gst_tag_list_unref(tags);
+    }
+    
+    /* Default title if none found */
+    if (!info->title) {
+        info->title = g_strdup_printf("Subtitle Track %d", index + 1);
+    }
+    
+    return info;
+}
+
+void player_free_stream_info(StreamInfo *info) {
+    if (!info) return;
+    g_free(info->language);
+    g_free(info->codec);
+    g_free(info->title);
+    g_free(info);
 }

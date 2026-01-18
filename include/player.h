@@ -62,4 +62,24 @@ gboolean player_has_video(MediaPlayer *player);
 GtkWidget* player_get_video_widget(MediaPlayer *player);  /* For gtksink */
 void player_set_video_widget_ready_callback(MediaPlayer *player, GCallback callback, gpointer user_data);
 
+/* Stream information and selection */
+typedef struct {
+    gint index;
+    gchar *language;
+    gchar *codec;
+    gchar *title;
+} StreamInfo;
+
+gint player_get_audio_stream_count(MediaPlayer *player);
+gint player_get_subtitle_stream_count(MediaPlayer *player);
+gint player_get_current_audio_stream(MediaPlayer *player);
+gint player_get_current_subtitle_stream(MediaPlayer *player);
+void player_set_audio_stream(MediaPlayer *player, gint index);
+void player_set_subtitle_stream(MediaPlayer *player, gint index);
+void player_set_subtitles_enabled(MediaPlayer *player, gboolean enabled);
+gboolean player_get_subtitles_enabled(MediaPlayer *player);
+StreamInfo* player_get_audio_stream_info(MediaPlayer *player, gint index);
+StreamInfo* player_get_subtitle_stream_info(MediaPlayer *player, gint index);
+void player_free_stream_info(StreamInfo *info);
+
 #endif /* PLAYER_H */

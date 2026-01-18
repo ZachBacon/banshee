@@ -44,6 +44,11 @@ void app_set_video_playing(gboolean playing) {
     /* Position updates now run in GStreamer thread, no GTK timer to manage */
 }
 
+void app_set_video_now_playing(const gchar *title) {
+    if (!g_app || !g_app->ui) return;
+    ui_update_now_playing_video(g_app->ui, title);
+}
+
 static void on_video_position_update(MediaPlayer *player, gint64 position, gint64 duration, gpointer user_data) {
     (void)player;  /* Unused */
     Application *app = (Application *)user_data;
