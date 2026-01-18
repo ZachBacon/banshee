@@ -6,10 +6,12 @@ static void on_chapters_button_clicked(GtkButton *button, gpointer user_data);
 static void on_transcript_button_clicked(GtkButton *button, gpointer user_data);
 static void on_support_button_clicked(GtkButton *button, gpointer user_data);
 static void on_value_button_clicked(GtkButton *button, gpointer user_data);
+static void on_live_button_clicked(GtkButton *button, gpointer user_data);
 static void on_chapter_seek(gpointer user_data, gdouble time);
 static void on_funding_url_clicked(GtkWidget *button, gpointer user_data);
 static void on_cancel_button_clicked(GtkButton *button, gpointer user_data);
 static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer user_data);
+static void update_live_indicator(PodcastView *view, Podcast *podcast);
 
 /* Helper function to update support button text based on current funding */
 static void update_support_button_text(PodcastView *view) {
@@ -51,6 +53,88 @@ static void update_value_button_text(PodcastView *view) {
     }
 }
 
+/* Helper function to update live indicator based on podcast's live items */
+static void update_live_indicator(PodcastView *view, Podcast *podcast) {
+    if (!view->live_indicator || !view->live_button) return;
+    
+    /* Clear current live items */
+    if (view->current_live_items) {
+        g_list_free_full(view->current_live_items, (GDestroyNotify)podcast_live_item_free);
+        view->current_live_items = NULL;
+    }
+    
+    if (!podcast) {
+        gtk_widget_set_visible(view->live_indicator, FALSE);
+        gtk_widget_set_visible(view->live_button, FALSE);
+        return;
+    }
+    
+    /* Check if podcast has active live items */
+    gboolean has_live = podcast->has_active_live;
+    
+    /* Copy live items for use */
+    if (podcast->live_items) {
+        view->current_live_items = g_list_copy_deep(podcast->live_items, (GCopyFunc)podcast_live_item_copy, NULL);
+    }
+    
+    if (has_live) {
+        /* Find the first live item to display */
+        PodcastLiveItem *live_item = NULL;
+        for (GList *l = view->current_live_items; l != NULL; l = l->next) {
+            PodcastLiveItem *item = (PodcastLiveItem *)l->data;
+            if (item->status == LIVE_STATUS_LIVE) {
+                live_item = item;
+                break;
+            }
+        }
+        
+        if (live_item && live_item->title) {
+            gchar *label = g_strdup_printf("🔴 LIVE: %s", live_item->title);
+            gtk_label_set_text(GTK_LABEL(view->live_indicator), label);
+            g_free(label);
+        } else {
+            gtk_label_set_text(GTK_LABEL(view->live_indicator), "🔴 LIVE");
+        }
+        
+        gtk_widget_set_visible(view->live_indicator, TRUE);
+        gtk_widget_set_visible(view->live_button, TRUE);
+        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->live_button), "Watch/Listen Live");
+    } else if (view->current_live_items) {
+        /* Has pending live items, show upcoming */
+        PodcastLiveItem *next_live = NULL;
+        gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+        
+        for (GList *l = view->current_live_items; l != NULL; l = l->next) {
+            PodcastLiveItem *item = (PodcastLiveItem *)l->data;
+            if (item->status == LIVE_STATUS_PENDING && item->start_time > now) {
+                if (!next_live || item->start_time < next_live->start_time) {
+                    next_live = item;
+                }
+            }
+        }
+        
+        if (next_live) {
+            GDateTime *dt = g_date_time_new_from_unix_local(next_live->start_time);
+            if (dt) {
+                gchar *time_str = g_date_time_format(dt, "%b %d, %H:%M");
+                gchar *label = g_strdup_printf("⏱ Upcoming: %s", time_str);
+                gtk_label_set_text(GTK_LABEL(view->live_indicator), label);
+                g_free(label);
+                g_free(time_str);
+                g_date_time_unref(dt);
+            }
+            gtk_widget_set_visible(view->live_indicator, TRUE);
+            gtk_widget_set_visible(view->live_button, FALSE);
+        } else {
+            gtk_widget_set_visible(view->live_indicator, FALSE);
+            gtk_widget_set_visible(view->live_button, FALSE);
+        }
+    } else {
+        gtk_widget_set_visible(view->live_indicator, FALSE);
+        gtk_widget_set_visible(view->live_button, FALSE);
+    }
+}
+
 /* Download callbacks */
 static void on_download_progress(gpointer user_data, gint episode_id, gdouble progress, const gchar *status);
 static void on_download_complete(gpointer user_data, gint episode_id, gboolean success, const gchar *error_msg);
@@ -85,6 +169,21 @@ static void on_podcast_selection_changed(GtkTreeSelection *selection, gpointer u
         
         /* Load podcast funding information and enable/disable support button */
         Podcast *podcast = database_get_podcast_by_id(view->database, podcast_id);
+        
+        /* Also get podcast from manager to get live items (which are parsed from feed) */
+        Podcast *manager_podcast = NULL;
+        GList *podcasts = podcast_manager_get_podcasts(view->podcast_manager);
+        for (GList *l = podcasts; l != NULL; l = l->next) {
+            Podcast *p = (Podcast *)l->data;
+            if (p->id == podcast_id) {
+                manager_podcast = p;
+                break;
+            }
+        }
+        
+        /* Update live indicator */
+        update_live_indicator(view, manager_podcast);
+        
         if (podcast && podcast->funding) {
             /* Set current funding to podcast-level funding */
             if (view->current_funding) {
@@ -824,6 +923,71 @@ static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
     gtk_popover_popup(GTK_POPOVER(view->value_popover));
 }
 
+/* Handle click on live button - opens the live stream */
+static void on_live_button_clicked(GtkButton *button, gpointer user_data) {
+    PodcastView *view = (PodcastView *)user_data;
+    (void)button;
+    
+    if (!view->current_live_items) {
+        return;
+    }
+    
+    /* Find the first active live item */
+    PodcastLiveItem *live_item = NULL;
+    for (GList *l = view->current_live_items; l != NULL; l = l->next) {
+        PodcastLiveItem *item = (PodcastLiveItem *)l->data;
+        if (item->status == LIVE_STATUS_LIVE) {
+            live_item = item;
+            break;
+        }
+    }
+    
+    if (!live_item) {
+        return;
+    }
+    
+    /* Try to play the enclosure URL directly if available */
+    if (live_item->enclosure_url && view->play_callback) {
+        view->play_callback(view->play_callback_data, 
+                           live_item->enclosure_url, 
+                           live_item->title ? live_item->title : "Live Stream",
+                           NULL, NULL, NULL, NULL);
+        return;
+    }
+    
+    /* Otherwise, try to open a content link in the browser */
+    if (live_item->content_links) {
+        PodcastContentLink *link = (PodcastContentLink *)live_item->content_links->data;
+        if (link && link->href) {
+            /* Create a popover to show content link options */
+            GtkWidget *popover = gtk_popover_new(view->live_button);
+            GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+            gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+            
+            GtkWidget *title = gtk_label_new("Open Live Stream:");
+            PangoAttrList *attrs = pango_attr_list_new();
+            pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
+            gtk_label_set_attributes(GTK_LABEL(title), attrs);
+            pango_attr_list_unref(attrs);
+            gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 5);
+            
+            for (GList *cl = live_item->content_links; cl != NULL; cl = cl->next) {
+                PodcastContentLink *content_link = (PodcastContentLink *)cl->data;
+                if (content_link && content_link->href) {
+                    GtkWidget *link_button = gtk_link_button_new_with_label(
+                        content_link->href, 
+                        content_link->text ? content_link->text : "Open Stream");
+                    gtk_box_pack_start(GTK_BOX(box), link_button, FALSE, FALSE, 0);
+                }
+            }
+            
+            gtk_container_add(GTK_CONTAINER(popover), box);
+            gtk_widget_show_all(popover);
+            gtk_popover_popup(GTK_POPOVER(popover));
+        }
+    }
+}
+
 PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     PodcastView *view = g_new0(PodcastView, 1);
     view->podcast_manager = manager;
@@ -914,6 +1078,39 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     gtk_widget_set_sensitive(view->value_button, FALSE);  /* Disabled until value tags available */
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->value_button), -1);
     g_signal_connect(view->value_button, "clicked", G_CALLBACK(on_value_button_clicked), view);
+    
+    /* Add separator before live indicator */
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
+    
+    /* Live indicator - a label that shows when podcast is live */
+    GtkToolItem *live_indicator_item = gtk_tool_item_new();
+    view->live_indicator = gtk_label_new("");
+    /* Style the live indicator with red background and white text */
+    GtkCssProvider *css_provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(css_provider,
+        "label.live-indicator { "
+        "  background-color: #ff0000; "
+        "  color: white; "
+        "  padding: 2px 8px; "
+        "  border-radius: 4px; "
+        "  font-weight: bold; "
+        "}", -1, NULL);
+    GtkStyleContext *style_context = gtk_widget_get_style_context(view->live_indicator);
+    gtk_style_context_add_provider(style_context, GTK_STYLE_PROVIDER(css_provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    gtk_style_context_add_class(style_context, "live-indicator");
+    g_object_unref(css_provider);
+    gtk_container_add(GTK_CONTAINER(live_indicator_item), view->live_indicator);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), live_indicator_item, -1);
+    gtk_widget_set_visible(view->live_indicator, FALSE);  /* Hidden by default */
+    
+    /* Live button - to watch/listen to live stream */
+    view->live_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Watch/Listen Live"));
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->live_button), "media-playback-start-symbolic");
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->live_button), -1);
+    g_signal_connect(view->live_button, "clicked", G_CALLBACK(on_live_button_clicked), view);
+    gtk_widget_set_visible(view->live_button, FALSE);  /* Hidden by default */
+    
+    view->current_live_items = NULL;
     
     gtk_box_pack_start(GTK_BOX(view->container), toolbar, FALSE, FALSE, 0);
     
@@ -1028,6 +1225,9 @@ void podcast_view_free(PodcastView *view) {
     }
     if (view->current_value) {
         g_list_free_full(view->current_value, (GDestroyNotify)podcast_value_free);
+    }
+    if (view->current_live_items) {
+        g_list_free_full(view->current_live_items, (GDestroyNotify)podcast_live_item_free);
     }
     
     /* Clean up download progress tracking */

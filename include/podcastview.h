@@ -45,6 +45,11 @@ typedef struct {
     GtkWidget *support_button;
     GtkWidget *value_button;  /* Value 4 Value (Lightning) button */
     
+    /* Live indicator */
+    GtkWidget *live_indicator;      /* Label showing "🔴 LIVE" when podcast is live */
+    GtkWidget *live_button;         /* Button to view/play live stream */
+    GList *current_live_items;      /* Current live items for selected podcast */
+    
     /* Episode data */
     ChapterView *chapter_view;
     GtkWidget *chapter_popover;

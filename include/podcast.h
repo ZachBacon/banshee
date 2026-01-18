@@ -24,6 +24,8 @@ struct Podcast {
     GList *funding;  /* List of PodcastFunding */
     GList *images;   /* List of PodcastImage */
     GList *value;    /* List of PodcastValue (Value4Value) */
+    GList *live_items;     /* List of PodcastLiveItem */
+    gboolean has_active_live;  /* TRUE if any live item has status=live */
 };
 
 /* Episode structure with Podcast 2.0 features */
@@ -104,6 +106,37 @@ typedef struct {
     gchar *custom_key;
     gchar *custom_value;
 } ValueRecipient;
+
+/* Content Link for Live Items */
+typedef struct {
+    gchar *href;      /* Required: URL to the content */
+    gchar *text;      /* Optional: Display text */
+} PodcastContentLink;
+
+/* Live Item status enum */
+typedef enum {
+    LIVE_STATUS_PENDING,
+    LIVE_STATUS_LIVE,
+    LIVE_STATUS_ENDED
+} LiveItemStatus;
+
+/* Live Item structure (podcast:liveItem) */
+typedef struct {
+    gint id;
+    gint podcast_id;
+    gchar *guid;
+    gchar *title;
+    gchar *description;
+    gchar *enclosure_url;
+    gchar *enclosure_type;
+    gint64 enclosure_length;
+    gint64 start_time;       /* ISO8601 timestamp as Unix time */
+    gint64 end_time;         /* ISO8601 timestamp as Unix time */
+    LiveItemStatus status;   /* pending, live, or ended */
+    GList *content_links;    /* List of PodcastContentLink */
+    GList *persons;          /* List of PodcastPerson */
+    gchar *image_url;        /* Image URL for this live item */
+} PodcastLiveItem;
 
 /* Chapter information */
 typedef struct {
@@ -186,6 +219,8 @@ void podcast_funding_free(PodcastFunding *funding);
 void podcast_value_free(PodcastValue *value);
 void value_recipient_free(ValueRecipient *recipient);
 void podcast_chapter_free(PodcastChapter *chapter);
+void podcast_content_link_free(PodcastContentLink *link);
+void podcast_live_item_free(PodcastLiveItem *live_item);
 
 /* Copy functions for deep copying */
 PodcastChapter* podcast_chapter_copy(const PodcastChapter *chapter);
@@ -193,6 +228,14 @@ PodcastImage* podcast_image_copy(const PodcastImage *image);
 PodcastFunding* podcast_funding_copy(const PodcastFunding *funding);
 PodcastValue* podcast_value_copy(const PodcastValue *value);
 ValueRecipient* value_recipient_copy(const ValueRecipient *recipient);
+PodcastContentLink* podcast_content_link_copy(const PodcastContentLink *link);
+PodcastLiveItem* podcast_live_item_copy(const PodcastLiveItem *live_item);
+
+/* Live item operations */
+GList* podcast_manager_get_live_items(PodcastManager *manager, gint podcast_id);
+gboolean podcast_has_active_live_item(Podcast *podcast);
+const gchar* podcast_live_status_to_string(LiveItemStatus status);
+LiveItemStatus podcast_live_status_from_string(const gchar *status_str);
 
 /* RSS Feed parsing */
 Podcast* podcast_parse_feed(const gchar *feed_url);

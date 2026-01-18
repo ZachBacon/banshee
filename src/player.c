@@ -479,12 +479,17 @@ gboolean player_set_uri(MediaPlayer *player, const gchar *uri) {
     /* Set to ready state to get duration */
     gst_element_set_state(player->playbin, GST_STATE_PAUSED);
     
-    /* Wait for state change */
+    /* Wait for state change with timeout (5 seconds max to avoid hanging on live streams) */
     GstState state;
-    gst_element_get_state(player->playbin, &state, NULL, GST_CLOCK_TIME_NONE);
+    GstStateChangeReturn state_ret = gst_element_get_state(player->playbin, &state, NULL, 5 * GST_SECOND);
     
-    /* Query duration */
-    gst_element_query_duration(player->playbin, GST_FORMAT_TIME, &player->duration);
+    /* Query duration (may fail for live streams, which is OK) */
+    if (state_ret != GST_STATE_CHANGE_FAILURE) {
+        gst_element_query_duration(player->playbin, GST_FORMAT_TIME, &player->duration);
+    } else {
+        /* For live streams or slow connections, duration may not be available */
+        player->duration = GST_CLOCK_TIME_NONE;
+    }
     
     return TRUE;
 }

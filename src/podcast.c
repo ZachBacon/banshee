@@ -226,6 +226,7 @@ void podcast_free(Podcast *podcast) {
     g_list_free_full(podcast->funding, (GDestroyNotify)podcast_funding_free);
     g_list_free_full(podcast->images, (GDestroyNotify)podcast_image_free);
     g_list_free_full(podcast->value, (GDestroyNotify)podcast_value_free);
+    g_list_free_full(podcast->live_items, (GDestroyNotify)podcast_live_item_free);
     
     g_free(podcast);
 }
@@ -374,6 +375,87 @@ PodcastValue* podcast_value_copy(const PodcastValue *value) {
     copy->recipients = g_list_copy_deep(value->recipients, (GCopyFunc)value_recipient_copy, NULL);
     
     return copy;
+}
+
+void podcast_content_link_free(PodcastContentLink *link) {
+    if (!link) return;
+    g_free(link->href);
+    g_free(link->text);
+    g_free(link);
+}
+
+PodcastContentLink* podcast_content_link_copy(const PodcastContentLink *link) {
+    if (!link) return NULL;
+    
+    PodcastContentLink *copy = g_new0(PodcastContentLink, 1);
+    copy->href = g_strdup(link->href);
+    copy->text = g_strdup(link->text);
+    
+    return copy;
+}
+
+void podcast_live_item_free(PodcastLiveItem *live_item) {
+    if (!live_item) return;
+    g_free(live_item->guid);
+    g_free(live_item->title);
+    g_free(live_item->description);
+    g_free(live_item->enclosure_url);
+    g_free(live_item->enclosure_type);
+    g_free(live_item->image_url);
+    g_list_free_full(live_item->content_links, (GDestroyNotify)podcast_content_link_free);
+    g_list_free_full(live_item->persons, (GDestroyNotify)podcast_person_free);
+    g_free(live_item);
+}
+
+PodcastLiveItem* podcast_live_item_copy(const PodcastLiveItem *live_item) {
+    if (!live_item) return NULL;
+    
+    PodcastLiveItem *copy = g_new0(PodcastLiveItem, 1);
+    copy->id = live_item->id;
+    copy->podcast_id = live_item->podcast_id;
+    copy->guid = g_strdup(live_item->guid);
+    copy->title = g_strdup(live_item->title);
+    copy->description = g_strdup(live_item->description);
+    copy->enclosure_url = g_strdup(live_item->enclosure_url);
+    copy->enclosure_type = g_strdup(live_item->enclosure_type);
+    copy->enclosure_length = live_item->enclosure_length;
+    copy->start_time = live_item->start_time;
+    copy->end_time = live_item->end_time;
+    copy->status = live_item->status;
+    copy->image_url = g_strdup(live_item->image_url);
+    copy->content_links = g_list_copy_deep(live_item->content_links, (GCopyFunc)podcast_content_link_copy, NULL);
+    copy->persons = NULL;  /* Deep copy persons if needed */
+    
+    return copy;
+}
+
+/* Live item status conversion functions */
+const gchar* podcast_live_status_to_string(LiveItemStatus status) {
+    switch (status) {
+        case LIVE_STATUS_PENDING: return "pending";
+        case LIVE_STATUS_LIVE: return "live";
+        case LIVE_STATUS_ENDED: return "ended";
+        default: return "pending";
+    }
+}
+
+LiveItemStatus podcast_live_status_from_string(const gchar *status_str) {
+    if (!status_str) return LIVE_STATUS_PENDING;
+    if (g_strcmp0(status_str, "live") == 0) return LIVE_STATUS_LIVE;
+    if (g_strcmp0(status_str, "ended") == 0) return LIVE_STATUS_ENDED;
+    return LIVE_STATUS_PENDING;
+}
+
+gboolean podcast_has_active_live_item(Podcast *podcast) {
+    if (!podcast || !podcast->live_items) return FALSE;
+    
+    for (GList *l = podcast->live_items; l != NULL; l = l->next) {
+        PodcastLiveItem *item = (PodcastLiveItem *)l->data;
+        if (item->status == LIVE_STATUS_LIVE) {
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 static xmlChar* get_node_content(xmlNodePtr node, const gchar *name) {
@@ -592,6 +674,152 @@ static void parse_podcast_ns_elements(xmlNodePtr parent,
     if (value_out) *value_out = g_list_reverse(*value_out);
 }
 
+/* Parse a <podcast:contentLink> element into PodcastContentLink struct */
+static PodcastContentLink* parse_podcast_content_link_node(xmlNodePtr node) {
+    if (!node) return NULL;
+    
+    PodcastContentLink *link = g_new0(PodcastContentLink, 1);
+    
+    link->href = xml_get_prop_string(node, "href");
+    
+    xmlChar *content = xmlNodeGetContent(node);
+    if (content) {
+        link->text = g_strdup((gchar *)content);
+        xmlFree(content);
+    }
+    
+    /* Return NULL if no href (required field) */
+    if (!link->href) {
+        podcast_content_link_free(link);
+        return NULL;
+    }
+    
+    return link;
+}
+
+/* Parse a <podcast:liveItem> element into PodcastLiveItem struct */
+static PodcastLiveItem* parse_podcast_live_item_node(xmlNodePtr node, gint podcast_id) {
+    if (!node) return NULL;
+    
+    PodcastLiveItem *live_item = g_new0(PodcastLiveItem, 1);
+    live_item->podcast_id = podcast_id;
+    
+    /* Parse required attributes */
+    gchar *status_str = xml_get_prop_string(node, "status");
+    live_item->status = podcast_live_status_from_string(status_str);
+    g_free(status_str);
+    
+    gchar *start_str = xml_get_prop_string(node, "start");
+    if (start_str) {
+        GDateTime *dt = g_date_time_new_from_iso8601(start_str, NULL);
+        if (dt) {
+            live_item->start_time = g_date_time_to_unix(dt);
+            g_date_time_unref(dt);
+        }
+        g_free(start_str);
+    }
+    
+    gchar *end_str = xml_get_prop_string(node, "end");
+    if (end_str) {
+        GDateTime *dt = g_date_time_new_from_iso8601(end_str, NULL);
+        if (dt) {
+            live_item->end_time = g_date_time_to_unix(dt);
+            g_date_time_unref(dt);
+        }
+        g_free(end_str);
+    }
+    
+    /* Parse child elements */
+    xmlNodePtr child = node->children;
+    while (child) {
+        if (child->type == XML_ELEMENT_NODE) {
+            /* Standard RSS elements */
+            if (xmlStrcmp(child->name, (const xmlChar *)"title") == 0 && !child->ns) {
+                xmlChar *content = xmlNodeGetContent(child);
+                if (content) {
+                    live_item->title = g_strdup((gchar *)content);
+                    xmlFree(content);
+                }
+            } else if (xmlStrcmp(child->name, (const xmlChar *)"description") == 0 && !child->ns) {
+                xmlChar *content = xmlNodeGetContent(child);
+                if (content) {
+                    live_item->description = g_strdup((gchar *)content);
+                    xmlFree(content);
+                }
+            } else if (xmlStrcmp(child->name, (const xmlChar *)"guid") == 0 && !child->ns) {
+                xmlChar *content = xmlNodeGetContent(child);
+                if (content) {
+                    live_item->guid = g_strdup((gchar *)content);
+                    xmlFree(content);
+                }
+            } else if (xmlStrcmp(child->name, (const xmlChar *)"enclosure") == 0 && !child->ns) {
+                live_item->enclosure_url = xml_get_prop_string(child, "url");
+                live_item->enclosure_type = xml_get_prop_string(child, "type");
+                gchar *length_str = xml_get_prop_string(child, "length");
+                if (length_str) {
+                    live_item->enclosure_length = g_ascii_strtoll(length_str, NULL, 10);
+                    g_free(length_str);
+                }
+            }
+            /* Podcast namespace elements */
+            else if (is_podcast_namespace(child)) {
+                if (xmlStrcmp(child->name, (const xmlChar *)"contentLink") == 0) {
+                    PodcastContentLink *link = parse_podcast_content_link_node(child);
+                    if (link) {
+                        live_item->content_links = g_list_prepend(live_item->content_links, link);
+                    }
+                } else if (xmlStrcmp(child->name, (const xmlChar *)"images") == 0 ||
+                           xmlStrcmp(child->name, (const xmlChar *)"image") == 0) {
+                    gchar *href = xml_get_prop_string(child, "href");
+                    if (!href) {
+                        href = xml_get_prop_string(child, "srcset");
+                        /* Get first URL from srcset if present */
+                        if (href) {
+                            gchar *space = strchr(href, ' ');
+                            if (space) *space = '\0';
+                        }
+                    }
+                    if (href) {
+                        g_free(live_item->image_url);
+                        live_item->image_url = href;
+                    }
+                }
+            }
+        }
+        child = child->next;
+    }
+    
+    live_item->content_links = g_list_reverse(live_item->content_links);
+    
+    g_debug("Found live item: %s (status=%s, start=%ld)", 
+            live_item->title ? live_item->title : "Untitled",
+            podcast_live_status_to_string(live_item->status),
+            (long)live_item->start_time);
+    
+    return live_item;
+}
+
+/* Parse all live items from a channel */
+static GList* parse_podcast_live_items(xmlNodePtr channel, gint podcast_id) {
+    GList *live_items = NULL;
+    
+    xmlNodePtr cur = channel->children;
+    while (cur) {
+        if (cur->type == XML_ELEMENT_NODE && 
+            xmlStrcmp(cur->name, (const xmlChar *)"liveItem") == 0 &&
+            is_podcast_namespace(cur)) {
+            
+            PodcastLiveItem *live_item = parse_podcast_live_item_node(cur, podcast_id);
+            if (live_item) {
+                live_items = g_list_prepend(live_items, live_item);
+            }
+        }
+        cur = cur->next;
+    }
+    
+    return g_list_reverse(live_items);
+}
+
 /* Internal version that can reuse a curl handle */
 static Podcast* podcast_parse_feed_internal(const gchar *feed_url, CURL *curl_handle) {
     gchar *xml_data = fetch_url_with_handle(feed_url, curl_handle);
@@ -671,6 +899,14 @@ static Podcast* podcast_parse_feed_internal(const gchar *feed_url, CURL *curl_ha
     
     /* Parse all Podcast 2.0 elements (images, funding, value) using helper function */
     parse_podcast_ns_elements(channel, &podcast->images, &podcast->funding, &podcast->value);
+    
+    /* Parse live items */
+    podcast->live_items = parse_podcast_live_items(channel, podcast->id);
+    podcast->has_active_live = podcast_has_active_live_item(podcast);
+    
+    if (podcast->has_active_live) {
+        g_debug("Podcast '%s' has an active live stream!", podcast->title);
+    }
     
     xmlFreeDoc(doc);
     return podcast;
@@ -911,6 +1147,11 @@ gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_ur
         database_save_podcast_value(manager->database, podcast_id, podcast->value);
     }
     
+    /* Save podcast live items if available */
+    if (podcast->live_items) {
+        database_save_podcast_live_items(manager->database, podcast_id, podcast->live_items);
+    }
+    
     /* Fetch and parse episodes */
     gchar *xml_data = fetch_url(feed_url);
     if (xml_data) {
@@ -1033,6 +1274,21 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
             g_list_free_full(podcast->value, (GDestroyNotify)podcast_value_free);
         }
         podcast->value = g_list_copy_deep(updated_podcast->value, (GCopyFunc)podcast_value_copy, NULL);
+    }
+    /* Update live items - these change frequently so always update */
+    if (updated_podcast) {
+        database_save_podcast_live_items(manager->database, podcast_id, updated_podcast->live_items);
+        
+        /* Update the in-memory podcast live items */
+        if (podcast->live_items) {
+            g_list_free_full(podcast->live_items, (GDestroyNotify)podcast_live_item_free);
+        }
+        podcast->live_items = g_list_copy_deep(updated_podcast->live_items, (GCopyFunc)podcast_live_item_copy, NULL);
+        podcast->has_active_live = podcast_has_active_live_item(podcast);
+        
+        if (podcast->has_active_live) {
+            g_debug("Podcast '%s' is currently LIVE!", podcast->title);
+        }
     }
     if (updated_podcast) {
         podcast_free(updated_podcast);
@@ -1177,6 +1433,21 @@ GList* podcast_manager_get_episodes(PodcastManager *manager, gint podcast_id) {
     
     /* Query episodes from database */
     return database_get_podcast_episodes(manager->database, podcast_id);
+}
+
+GList* podcast_manager_get_live_items(PodcastManager *manager, gint podcast_id) {
+    if (!manager) return NULL;
+    
+    /* Find the podcast and return its live items */
+    for (GList *l = manager->podcasts; l != NULL; l = l->next) {
+        Podcast *p = (Podcast *)l->data;
+        if (p->id == podcast_id) {
+            /* Return a deep copy of the live items list */
+            return g_list_copy_deep(p->live_items, (GCopyFunc)podcast_live_item_copy, NULL);
+        }
+    }
+    
+    return NULL;
 }
 
 static size_t write_file_callback(void *ptr, size_t size, size_t nmemb, FILE *stream) {

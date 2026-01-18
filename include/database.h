@@ -96,6 +96,11 @@ gboolean database_save_episode_value(Database *db, gint episode_id, GList *value
 GList* database_load_podcast_value(Database *db, gint podcast_id);
 GList* database_load_episode_value(Database *db, gint episode_id);
 
+/* Live item operations */
+gboolean database_save_podcast_live_items(Database *db, gint podcast_id, GList *live_items);
+GList* database_load_podcast_live_items(Database *db, gint podcast_id);
+gboolean database_has_active_live_item(Database *db, gint podcast_id);
+
 /* Preference operations */
 gboolean database_set_preference(Database *db, const gchar *key, const gchar *value);
 gchar* database_get_preference(Database *db, const gchar *key, const gchar *default_value);

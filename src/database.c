@@ -157,6 +157,33 @@ static const char *CREATE_VALUE_RECIPIENTS_TABLE =
     "FOREIGN KEY(value_id) REFERENCES episode_value(id) ON DELETE CASCADE"
     ");";
 
+static const char *CREATE_LIVE_ITEMS_TABLE =
+    "CREATE TABLE IF NOT EXISTS podcast_live_items ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "podcast_id INTEGER NOT NULL,"
+    "guid TEXT,"
+    "title TEXT,"
+    "description TEXT,"
+    "enclosure_url TEXT,"
+    "enclosure_type TEXT,"
+    "enclosure_length INTEGER,"
+    "start_time INTEGER,"
+    "end_time INTEGER,"
+    "status TEXT NOT NULL DEFAULT 'pending',"
+    "image_url TEXT,"
+    "FOREIGN KEY(podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE,"
+    "UNIQUE(podcast_id, guid)"
+    ");";
+
+static const char *CREATE_LIVE_ITEM_CONTENT_LINKS_TABLE =
+    "CREATE TABLE IF NOT EXISTS live_item_content_links ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "live_item_id INTEGER NOT NULL,"
+    "href TEXT NOT NULL,"
+    "text TEXT,"
+    "FOREIGN KEY(live_item_id) REFERENCES podcast_live_items(id) ON DELETE CASCADE"
+    ");";
+
 
 Database* database_new(const gchar *db_path) {
     Database *db = g_new0(Database, 1);
@@ -280,6 +307,22 @@ gboolean database_init_tables(Database *db) {
     
     /* Create value_recipients table */
     rc = sqlite3_exec(db->db, CREATE_VALUE_RECIPIENTS_TABLE, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_printerr("SQL error: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    
+    /* Create podcast_live_items table */
+    rc = sqlite3_exec(db->db, CREATE_LIVE_ITEMS_TABLE, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_printerr("SQL error: %s\n", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    
+    /* Create live_item_content_links table */
+    rc = sqlite3_exec(db->db, CREATE_LIVE_ITEM_CONTENT_LINKS_TABLE, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
         g_printerr("SQL error: %s\n", err_msg);
         sqlite3_free(err_msg);
@@ -1805,4 +1848,145 @@ gboolean database_get_preference_bool(Database *db, const gchar *key, gboolean d
     gboolean result = (g_strcmp0(value_str, "true") == 0 || g_strcmp0(value_str, "1") == 0);
     g_free(value_str);
     return result;
+}
+
+/* Live item database operations */
+gboolean database_save_podcast_live_items(Database *db, gint podcast_id, GList *live_items) {
+    if (!db || !db->db || podcast_id <= 0) return FALSE;
+    
+    /* First, delete existing live items for this podcast */
+    const char *delete_sql = "DELETE FROM podcast_live_items WHERE podcast_id = ?;";
+    sqlite3_stmt *delete_stmt;
+    int rc = sqlite3_prepare_v2(db->db, delete_sql, -1, &delete_stmt, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_int(delete_stmt, 1, podcast_id);
+        sqlite3_step(delete_stmt);
+        sqlite3_finalize(delete_stmt);
+    }
+    
+    if (!live_items) return TRUE;  /* Nothing to save */
+    
+    const char *sql = "INSERT INTO podcast_live_items (podcast_id, guid, title, description, "
+                      "enclosure_url, enclosure_type, enclosure_length, start_time, end_time, "
+                      "status, image_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+    
+    sqlite3_stmt *stmt;
+    rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return FALSE;
+    
+    for (GList *l = live_items; l != NULL; l = l->next) {
+        PodcastLiveItem *item = (PodcastLiveItem *)l->data;
+        
+        sqlite3_reset(stmt);
+        sqlite3_bind_int(stmt, 1, podcast_id);
+        sqlite3_bind_text(stmt, 2, item->guid, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, item->title, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 4, item->description, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 5, item->enclosure_url, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 6, item->enclosure_type, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 7, item->enclosure_length);
+        sqlite3_bind_int64(stmt, 8, item->start_time);
+        sqlite3_bind_int64(stmt, 9, item->end_time);
+        sqlite3_bind_text(stmt, 10, podcast_live_status_to_string(item->status), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 11, item->image_url, -1, SQLITE_TRANSIENT);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            g_warning("Failed to save live item: %s", sqlite3_errmsg(db->db));
+            continue;
+        }
+        
+        gint64 live_item_id = sqlite3_last_insert_rowid(db->db);
+        
+        /* Save content links */
+        if (item->content_links) {
+            const char *link_sql = "INSERT INTO live_item_content_links (live_item_id, href, text) VALUES (?, ?, ?);";
+            sqlite3_stmt *link_stmt;
+            if (sqlite3_prepare_v2(db->db, link_sql, -1, &link_stmt, NULL) == SQLITE_OK) {
+                for (GList *cl = item->content_links; cl != NULL; cl = cl->next) {
+                    PodcastContentLink *link = (PodcastContentLink *)cl->data;
+                    sqlite3_reset(link_stmt);
+                    sqlite3_bind_int64(link_stmt, 1, live_item_id);
+                    sqlite3_bind_text(link_stmt, 2, link->href, -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(link_stmt, 3, link->text, -1, SQLITE_TRANSIENT);
+                    sqlite3_step(link_stmt);
+                }
+                sqlite3_finalize(link_stmt);
+            }
+        }
+    }
+    
+    sqlite3_finalize(stmt);
+    return TRUE;
+}
+
+GList* database_load_podcast_live_items(Database *db, gint podcast_id) {
+    if (!db || !db->db || podcast_id <= 0) return NULL;
+    
+    const char *sql = "SELECT id, guid, title, description, enclosure_url, enclosure_type, "
+                      "enclosure_length, start_time, end_time, status, image_url "
+                      "FROM podcast_live_items WHERE podcast_id = ? ORDER BY start_time DESC;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return NULL;
+    
+    sqlite3_bind_int(stmt, 1, podcast_id);
+    
+    GList *live_items = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        PodcastLiveItem *item = g_new0(PodcastLiveItem, 1);
+        
+        item->id = sqlite3_column_int(stmt, 0);
+        item->podcast_id = podcast_id;
+        item->guid = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
+        item->title = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        item->description = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
+        item->enclosure_url = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
+        item->enclosure_type = g_strdup((const gchar *)sqlite3_column_text(stmt, 5));
+        item->enclosure_length = sqlite3_column_int64(stmt, 6);
+        item->start_time = sqlite3_column_int64(stmt, 7);
+        item->end_time = sqlite3_column_int64(stmt, 8);
+        item->status = podcast_live_status_from_string((const gchar *)sqlite3_column_text(stmt, 9));
+        item->image_url = g_strdup((const gchar *)sqlite3_column_text(stmt, 10));
+        
+        /* Load content links */
+        const char *link_sql = "SELECT href, text FROM live_item_content_links WHERE live_item_id = ?;";
+        sqlite3_stmt *link_stmt;
+        if (sqlite3_prepare_v2(db->db, link_sql, -1, &link_stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(link_stmt, 1, item->id);
+            while (sqlite3_step(link_stmt) == SQLITE_ROW) {
+                PodcastContentLink *link = g_new0(PodcastContentLink, 1);
+                link->href = g_strdup((const gchar *)sqlite3_column_text(link_stmt, 0));
+                link->text = g_strdup((const gchar *)sqlite3_column_text(link_stmt, 1));
+                item->content_links = g_list_append(item->content_links, link);
+            }
+            sqlite3_finalize(link_stmt);
+        }
+        
+        live_items = g_list_append(live_items, item);
+    }
+    
+    sqlite3_finalize(stmt);
+    return live_items;
+}
+
+gboolean database_has_active_live_item(Database *db, gint podcast_id) {
+    if (!db || !db->db || podcast_id <= 0) return FALSE;
+    
+    const char *sql = "SELECT COUNT(*) FROM podcast_live_items WHERE podcast_id = ? AND status = 'live';";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return FALSE;
+    
+    sqlite3_bind_int(stmt, 1, podcast_id);
+    
+    gboolean has_live = FALSE;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        has_live = sqlite3_column_int(stmt, 0) > 0;
+    }
+    
+    sqlite3_finalize(stmt);
+    return has_live;
 }
