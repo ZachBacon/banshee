@@ -140,6 +140,9 @@ struct _PodcastManager {
     GMutex downloads_mutex;
     guint update_timer_id;  /* Timer for automatic feed updates */
     gint update_interval_days;  /* Update interval in days */
+    volatile gboolean update_cancelled;  /* Flag to cancel feed updates */
+    gboolean update_in_progress;  /* Flag indicating update is running */
+    void *curl_handle;  /* Reusable curl handle for feed updates (CURL*) */
 };
 
 /* Podcast Manager */
@@ -155,6 +158,8 @@ gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_ur
 gboolean podcast_manager_unsubscribe(PodcastManager *manager, gint podcast_id);
 void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id);
 void podcast_manager_update_all_feeds(PodcastManager *manager);
+void podcast_manager_cancel_updates(PodcastManager *manager);
+gboolean podcast_manager_is_updating(PodcastManager *manager);
 GList* podcast_manager_get_podcasts(PodcastManager *manager);
 GList* podcast_manager_get_episodes(PodcastManager *manager, gint podcast_id);
 

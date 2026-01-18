@@ -169,9 +169,10 @@ static GList* parse_simple_json_transcript(const gchar *json_data) {
 }
 
 static gchar* parse_webvtt_transcript(const gchar *vtt_data) {
-    /* Simple WebVTT parsing - just extract text without timestamps for now */
+    /* Simple WebVTT parsing - extract text and format speaker changes */
     GString *text = g_string_new("");
     gchar **lines = g_strsplit(vtt_data, "\n", -1);
+    gchar *current_speaker = NULL;
     
     gboolean in_cue = FALSE;
     for (gint i = 0; lines[i] != NULL; i++) {
@@ -195,13 +196,45 @@ static gchar* parse_webvtt_transcript(const gchar *vtt_data) {
         
         /* If we're in a cue and this isn't a timestamp, it's text */
         if (in_cue) {
-            if (text->len > 0) {
+            /* Check for speaker voice tag: <v Name> */
+            if (g_str_has_prefix(line, "<v ")) {
+                gchar *end = strchr(line + 3, '>');
+                if (end) {
+                    gchar *speaker = g_strndup(line + 3, end - (line + 3));
+                    
+                    /* If speaker changed, start a new line */
+                    if (!current_speaker || g_strcmp0(current_speaker, speaker) != 0) {
+                        g_free(current_speaker);
+                        current_speaker = speaker;
+                        
+                        /* Add newline before new speaker (if not first) */
+                        if (text->len > 0) {
+                            g_string_append(text, "\n\n");
+                        }
+                        g_string_append_printf(text, "<%s> ", current_speaker);
+                    } else {
+                        g_free(speaker);
+                        g_string_append(text, " ");
+                    }
+                    
+                    /* Append the text after the voice tag */
+                    gchar *content = end + 1;
+                    if (*content) {
+                        g_string_append(text, content);
+                    }
+                    continue;
+                }
+            }
+            
+            /* Regular text line (no voice tag) */
+            if (text->len > 0 && !g_str_has_suffix(text->str, "\n") && !g_str_has_suffix(text->str, " ")) {
                 g_string_append(text, " ");
             }
             g_string_append(text, line);
         }
     }
     
+    g_free(current_speaker);
     g_strfreev(lines);
     return g_string_free(text, FALSE);
 }

@@ -1622,6 +1622,89 @@ gboolean database_update_episode_downloaded(Database *db, gint episode_id, const
     return (rc == SQLITE_DONE);
 }
 
+gboolean database_update_episode_progress(Database *db, gint episode_id, gint position, gboolean played) {
+    if (!db || !db->db || episode_id <= 0) return FALSE;
+    
+    const char *sql = "UPDATE podcast_episodes SET play_position=?, played=? WHERE id=?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return FALSE;
+    
+    sqlite3_bind_int(stmt, 1, position);
+    sqlite3_bind_int(stmt, 2, played ? 1 : 0);
+    sqlite3_bind_int(stmt, 3, episode_id);
+    
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE);
+}
+
+gboolean database_delete_podcast(Database *db, gint podcast_id) {
+    if (!db || !db->db || podcast_id <= 0) return FALSE;
+    
+    /* Delete related data first (foreign key constraints) */
+    const char *delete_episodes_sql = "DELETE FROM podcast_episodes WHERE podcast_id=?;";
+    const char *delete_funding_sql = "DELETE FROM podcast_funding WHERE podcast_id=?;";
+    const char *delete_value_sql = "DELETE FROM podcast_value WHERE podcast_id=?;";
+    const char *delete_podcast_sql = "DELETE FROM podcasts WHERE id=?;";
+    
+    sqlite3_stmt *stmt;
+    int rc;
+    
+    /* Delete episodes */
+    rc = sqlite3_prepare_v2(db->db, delete_episodes_sql, -1, &stmt, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, podcast_id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    
+    /* Delete funding */
+    rc = sqlite3_prepare_v2(db->db, delete_funding_sql, -1, &stmt, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, podcast_id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    
+    /* Delete value */
+    rc = sqlite3_prepare_v2(db->db, delete_value_sql, -1, &stmt, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, podcast_id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+    
+    /* Delete podcast */
+    rc = sqlite3_prepare_v2(db->db, delete_podcast_sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return FALSE;
+    
+    sqlite3_bind_int(stmt, 1, podcast_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE);
+}
+
+gboolean database_clear_episode_download(Database *db, gint episode_id) {
+    if (!db || !db->db || episode_id <= 0) return FALSE;
+    
+    const char *sql = "UPDATE podcast_episodes SET downloaded=0, local_file_path=NULL WHERE id=?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return FALSE;
+    
+    sqlite3_bind_int(stmt, 1, episode_id);
+    
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE);
+}
+
 /* Preference operations */
 gboolean database_set_preference(Database *db, const gchar *key, const gchar *value) {
     if (!db || !db->db || !key) {

@@ -1,5 +1,5 @@
 # Compiler settings
-CC = gcc
+CC = cc
 CFLAGS = -Wall -Wextra -std=gnu11 -O2
 LDFLAGS =
 

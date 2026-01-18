@@ -6,6 +6,7 @@
 #include <libxml/xpath.h>
 #include <curl/curl.h>
 #include <json-glib/json-glib.h>
+#include <glib/gstdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -13,6 +14,18 @@
 #include <stdint.h>
 
 #ifdef _WIN32
+/* Helper to convert month name to number, returns -1 if not found */
+static int parse_month_name(const char *month_name) {
+    static const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    for (int i = 0; i < 12; i++) {
+        if (strcmp(month_name, months[i]) == 0) {
+            return i;
+        }
+    }
+    return -1;  /* Month not found */
+}
+
 /* Minimal strptime implementation for Windows */
 static char *strptime(const char *buf, const char *fmt, struct tm *tm) {
     /* Simple implementation for the specific formats used in this file */
@@ -25,14 +38,9 @@ static char *strptime(const char *buf, const char *fmt, struct tm *tm) {
         if (n != 7) return NULL;
         
         /* Convert month name to number */
-        const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-        for (int i = 0; i < 12; i++) {
-            if (strcmp(month_name, months[i]) == 0) {
-                tm->tm_mon = i;
-                break;
-            }
-        }
+        int mon = parse_month_name(month_name);
+        if (mon < 0) return NULL;  /* Unknown month */
+        tm->tm_mon = mon;
         tm->tm_year -= 1900;  /* tm_year is years since 1900 */
         tm->tm_isdst = -1;
         return (char *)buf + strlen(buf);
@@ -44,14 +52,9 @@ static char *strptime(const char *buf, const char *fmt, struct tm *tm) {
                        &tm->tm_hour, &tm->tm_min, &tm->tm_sec);
         if (n != 6) return NULL;
         
-        const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-        for (int i = 0; i < 12; i++) {
-            if (strcmp(month_name, months[i]) == 0) {
-                tm->tm_mon = i;
-                break;
-            }
-        }
+        int mon = parse_month_name(month_name);
+        if (mon < 0) return NULL;  /* Unknown month */
+        tm->tm_mon = mon;
         tm->tm_year -= 1900;
         tm->tm_isdst = -1;
         return (char *)buf + strlen(buf);
@@ -81,13 +84,20 @@ static size_t write_memory_callback(void *contents, size_t size, size_t nmemb, v
     return realsize;
 }
 
-gchar* fetch_url(const gchar *url) {
+/* Internal fetch function that can optionally reuse a curl handle */
+static gchar* fetch_url_with_handle(const gchar *url, CURL *reuse_handle) {
     CURL *curl;
     CURLcode res;
     MemoryBuffer chunk = {NULL, 0};
+    gboolean own_handle = FALSE;
     
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    curl = curl_easy_init();
+    if (reuse_handle) {
+        curl = reuse_handle;
+        curl_easy_reset(curl);  /* Reset options but keep connection */
+    } else {
+        curl = curl_easy_init();
+        own_handle = TRUE;
+    }
     
     if (!curl) return NULL;
     
@@ -99,10 +109,13 @@ gchar* fetch_url(const gchar *url) {
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     
     res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-    curl_global_cleanup();
+    
+    if (own_handle) {
+        curl_easy_cleanup(curl);
+    }
     
     if (res != CURLE_OK) {
+        g_warning("Failed to fetch URL '%s': %s", url, curl_easy_strerror(res));
         g_free(chunk.data);
         return NULL;
     }
@@ -110,14 +123,16 @@ gchar* fetch_url(const gchar *url) {
     return chunk.data;
 }
 
+gchar* fetch_url(const gchar *url) {
+    return fetch_url_with_handle(url, NULL);
+}
+
 gchar* fetch_binary_url(const gchar *url, gsize *out_size) {
     CURL *curl;
     CURLcode res;
     MemoryBuffer chunk = {NULL, 0};
     
-    curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
-    
     if (!curl) return NULL;
     
     curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -129,9 +144,9 @@ gchar* fetch_binary_url(const gchar *url, gsize *out_size) {
     
     res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
-    curl_global_cleanup();
     
     if (res != CURLE_OK) {
+        g_warning("Failed to fetch binary URL '%s': %s", url, curl_easy_strerror(res));
         g_free(chunk.data);
         return NULL;
     }
@@ -149,6 +164,9 @@ PodcastManager* podcast_manager_new(Database *database) {
     manager->update_timer_id = 0;
     manager->update_interval_days = 0;
     
+    /* Initialize curl globally (thread-safe, only once) */
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    
     /* Load existing podcasts from database */
     manager->podcasts = database_get_podcasts(database);
     
@@ -163,6 +181,9 @@ PodcastManager* podcast_manager_new(Database *database) {
     /* Create thread pool for downloads (max 3 concurrent downloads) */
     manager->download_pool = NULL;
     
+    /* Create reusable curl handle for feed updates */
+    manager->curl_handle = curl_easy_init();
+    
     return manager;
 }
 
@@ -171,6 +192,14 @@ void podcast_manager_free(PodcastManager *manager) {
     
     /* Stop auto-update timer */
     podcast_manager_stop_auto_update(manager);
+    
+    /* Cleanup reusable curl handle */
+    if (manager->curl_handle) {
+        curl_easy_cleanup((CURL *)manager->curl_handle);
+    }
+    
+    /* Cleanup curl globally */
+    curl_global_cleanup();
     
     g_list_free_full(manager->podcasts, (GDestroyNotify)podcast_free);
     if (manager->download_pool) {
@@ -196,11 +225,7 @@ void podcast_free(Podcast *podcast) {
     g_free(podcast->language);
     g_list_free_full(podcast->funding, (GDestroyNotify)podcast_funding_free);
     g_list_free_full(podcast->images, (GDestroyNotify)podcast_image_free);
-    
-    /* Safety check for value field - ensure it's either NULL or a valid pointer */
-    if (podcast->value != NULL && (uintptr_t)podcast->value > 0x1000) {
-        g_list_free_full(podcast->value, (GDestroyNotify)podcast_value_free);
-    }
+    g_list_free_full(podcast->value, (GDestroyNotify)podcast_value_free);
     
     g_free(podcast);
 }
@@ -390,8 +415,186 @@ static xmlChar* get_node_ns_prefix_content(xmlNodePtr node, const gchar *prefix,
     return NULL;
 }
 
-Podcast* podcast_parse_feed(const gchar *feed_url) {
-    gchar *xml_data = fetch_url(feed_url);
+/* Helper to get XML property as GLib string (caller must free) */
+static gchar* xml_get_prop_string(xmlNodePtr node, const gchar *name) {
+    xmlChar *val = xmlGetProp(node, (const xmlChar *)name);
+    if (!val) return NULL;
+    gchar *result = g_strdup((gchar *)val);
+    xmlFree(val);
+    return result;
+}
+
+/* Helper to check if node is in the Podcast 2.0 namespace */
+static gboolean is_podcast_namespace(xmlNodePtr node) {
+    return node->ns && 
+           (xmlStrcmp(node->ns->href, (const xmlChar *)PODCAST_NAMESPACE) == 0 ||
+            (node->ns->prefix && xmlStrcmp(node->ns->prefix, (const xmlChar *)"podcast") == 0));
+}
+
+/* Parse a <podcast:image> element into PodcastImage struct */
+static PodcastImage* parse_podcast_image_node(xmlNodePtr node) {
+    if (!node) return NULL;
+    
+    PodcastImage *image = g_new0(PodcastImage, 1);
+    
+    image->href = xml_get_prop_string(node, "href");
+    image->alt = xml_get_prop_string(node, "alt");
+    image->aspect_ratio = xml_get_prop_string(node, "aspect-ratio");
+    image->type = xml_get_prop_string(node, "type");
+    image->purpose = xml_get_prop_string(node, "purpose");
+    
+    gchar *width_str = xml_get_prop_string(node, "width");
+    gchar *height_str = xml_get_prop_string(node, "height");
+    
+    if (width_str) {
+        image->width = (gint)g_ascii_strtoll(width_str, NULL, 10);
+        g_free(width_str);
+    }
+    if (height_str) {
+        image->height = (gint)g_ascii_strtoll(height_str, NULL, 10);
+        g_free(height_str);
+    }
+    
+    /* Return NULL if no href (required field) */
+    if (!image->href) {
+        podcast_image_free(image);
+        return NULL;
+    }
+    
+    return image;
+}
+
+/* Parse a <podcast:funding> element into PodcastFunding struct */
+static PodcastFunding* parse_podcast_funding_node(xmlNodePtr node) {
+    if (!node) return NULL;
+    
+    PodcastFunding *funding = g_new0(PodcastFunding, 1);
+    
+    funding->url = xml_get_prop_string(node, "url");
+    
+    xmlChar *content = xmlNodeGetContent(node);
+    if (content) {
+        funding->message = g_strdup((gchar *)content);
+        xmlFree(content);
+    }
+    
+    /* Return NULL if no URL (required field) */
+    if (!funding->url) {
+        podcast_funding_free(funding);
+        return NULL;
+    }
+    
+    return funding;
+}
+
+/* Parse a <podcast:valueRecipient> element into ValueRecipient struct */
+static ValueRecipient* parse_value_recipient_node(xmlNodePtr node) {
+    if (!node) return NULL;
+    
+    ValueRecipient *recipient = g_new0(ValueRecipient, 1);
+    
+    recipient->name = xml_get_prop_string(node, "name");
+    recipient->type = xml_get_prop_string(node, "type");
+    recipient->address = xml_get_prop_string(node, "address");
+    recipient->custom_key = xml_get_prop_string(node, "customKey");
+    recipient->custom_value = xml_get_prop_string(node, "customValue");
+    
+    gchar *split_str = xml_get_prop_string(node, "split");
+    gchar *fee_str = xml_get_prop_string(node, "fee");
+    
+    if (split_str) {
+        recipient->split = (gint)g_ascii_strtoll(split_str, NULL, 10);
+        g_free(split_str);
+    }
+    if (fee_str) {
+        recipient->fee = (g_strcmp0(fee_str, "true") == 0);
+        g_free(fee_str);
+    }
+    
+    return recipient;
+}
+
+/* Parse a <podcast:value> element into PodcastValue struct */
+static PodcastValue* parse_podcast_value_node(xmlNodePtr node) {
+    if (!node) return NULL;
+    
+    PodcastValue *value = g_new0(PodcastValue, 1);
+    
+    value->type = xml_get_prop_string(node, "type");
+    value->method = xml_get_prop_string(node, "method");
+    value->suggested = xml_get_prop_string(node, "suggested");
+    
+    /* Parse valueRecipient child elements */
+    xmlNodePtr child = node->children;
+    while (child) {
+        if (child->type == XML_ELEMENT_NODE && 
+            xmlStrcmp(child->name, (const xmlChar *)"valueRecipient") == 0 &&
+            is_podcast_namespace(child)) {
+            
+            ValueRecipient *recipient = parse_value_recipient_node(child);
+            if (recipient) {
+                value->recipients = g_list_prepend(value->recipients, recipient);
+                g_debug("  Found value recipient: %s (%s) - %d%% split",
+                        recipient->name ? recipient->name : "Unknown",
+                        recipient->address ? recipient->address : "No address",
+                        recipient->split);
+            }
+        }
+        child = child->next;
+    }
+    value->recipients = g_list_reverse(value->recipients);
+    
+    /* Return NULL if missing required fields */
+    if (!value->type || !value->method) {
+        podcast_value_free(value);
+        return NULL;
+    }
+    
+    g_debug("Found value: type=%s, method=%s, suggested=%s", 
+            value->type, value->method, 
+            value->suggested ? value->suggested : "None");
+    
+    return value;
+}
+
+/* Parse all Podcast 2.0 elements from a parent node (channel or item) */
+static void parse_podcast_ns_elements(xmlNodePtr parent, 
+                                      GList **images_out,
+                                      GList **funding_out,
+                                      GList **value_out) {
+    xmlNodePtr cur = parent->children;
+    
+    while (cur) {
+        if (cur->type == XML_ELEMENT_NODE && is_podcast_namespace(cur)) {
+            if (xmlStrcmp(cur->name, (const xmlChar *)"image") == 0) {
+                PodcastImage *image = parse_podcast_image_node(cur);
+                if (image && images_out) {
+                    *images_out = g_list_prepend(*images_out, image);
+                }
+            } else if (xmlStrcmp(cur->name, (const xmlChar *)"funding") == 0) {
+                PodcastFunding *funding = parse_podcast_funding_node(cur);
+                if (funding && funding_out) {
+                    *funding_out = g_list_prepend(*funding_out, funding);
+                }
+            } else if (xmlStrcmp(cur->name, (const xmlChar *)"value") == 0) {
+                PodcastValue *value = parse_podcast_value_node(cur);
+                if (value && value_out) {
+                    *value_out = g_list_prepend(*value_out, value);
+                }
+            }
+        }
+        cur = cur->next;
+    }
+    
+    /* Reverse lists to maintain order */
+    if (images_out) *images_out = g_list_reverse(*images_out);
+    if (funding_out) *funding_out = g_list_reverse(*funding_out);
+    if (value_out) *value_out = g_list_reverse(*value_out);
+}
+
+/* Internal version that can reuse a curl handle */
+static Podcast* podcast_parse_feed_internal(const gchar *feed_url, CURL *curl_handle) {
+    gchar *xml_data = fetch_url_with_handle(feed_url, curl_handle);
     if (!xml_data) {
         g_warning("Failed to fetch feed: %s", feed_url);
         return NULL;
@@ -447,7 +650,7 @@ Podcast* podcast_parse_feed(const gchar *feed_url) {
     xmlNodePtr image_node = channel->children;
     while (image_node) {
         if (image_node->type == XML_ELEMENT_NODE) {
-            if (xmlStrcmp(image_node->name, (const xmlChar *)"image") == 0) {
+            if (xmlStrcmp(image_node->name, (const xmlChar *)"image") == 0 && !image_node->ns) {
                 xmlChar *url = get_node_content(image_node, "url");
                 if (url) {
                     podcast->image_url = g_strdup((gchar *)url);
@@ -456,10 +659,9 @@ Podcast* podcast_parse_feed(const gchar *feed_url) {
                 break;
             } else if (xmlStrcmp(image_node->name, (const xmlChar *)"image") == 0 && 
                        image_node->ns && xmlStrcmp(image_node->ns->prefix, (const xmlChar *)"itunes") == 0) {
-                xmlChar *href = xmlGetProp(image_node, (const xmlChar *)"href");
+                gchar *href = xml_get_prop_string(image_node, "href");
                 if (href) {
-                    podcast->image_url = g_strdup((gchar *)href);
-                    xmlFree(href);
+                    podcast->image_url = href;
                 }
                 break;
             }
@@ -467,188 +669,16 @@ Podcast* podcast_parse_feed(const gchar *feed_url) {
         image_node = image_node->next;
     }
     
-    /* Parse Podcast 2.0 image tags at channel level */
-    xmlNodePtr podcast_image_node = channel->children;
-    while (podcast_image_node) {
-        if (podcast_image_node->type == XML_ELEMENT_NODE && 
-            xmlStrcmp(podcast_image_node->name, (const xmlChar *)"image") == 0 &&
-            podcast_image_node->ns && xmlStrcmp(podcast_image_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-            
-            PodcastImage *image = g_new0(PodcastImage, 1);
-            
-            xmlChar *href = xmlGetProp(podcast_image_node, (const xmlChar *)"href");
-            xmlChar *alt = xmlGetProp(podcast_image_node, (const xmlChar *)"alt");
-            xmlChar *aspect_ratio = xmlGetProp(podcast_image_node, (const xmlChar *)"aspect-ratio");
-            xmlChar *width_str = xmlGetProp(podcast_image_node, (const xmlChar *)"width");
-            xmlChar *height_str = xmlGetProp(podcast_image_node, (const xmlChar *)"height");
-            xmlChar *type = xmlGetProp(podcast_image_node, (const xmlChar *)"type");
-            xmlChar *purpose = xmlGetProp(podcast_image_node, (const xmlChar *)"purpose");
-            
-            if (href) {
-                image->href = g_strdup((gchar *)href);
-                xmlFree(href);
-            }
-            if (alt) {
-                image->alt = g_strdup((gchar *)alt);
-                xmlFree(alt);
-            }
-            if (aspect_ratio) {
-                image->aspect_ratio = g_strdup((gchar *)aspect_ratio);
-                xmlFree(aspect_ratio);
-            }
-            if (width_str) {
-                image->width = atoi((gchar *)width_str);
-                xmlFree(width_str);
-            }
-            if (height_str) {
-                image->height = atoi((gchar *)height_str);
-                xmlFree(height_str);
-            }
-            if (type) {
-                image->type = g_strdup((gchar *)type);
-                xmlFree(type);
-            }
-            if (purpose) {
-                image->purpose = g_strdup((gchar *)purpose);
-                xmlFree(purpose);
-            }
-            
-            if (image->href) {
-                podcast->images = g_list_append(podcast->images, image);
-            } else {
-                podcast_image_free(image);
-            }
-        }
-        podcast_image_node = podcast_image_node->next;
-    }
-    
-    /* Parse Podcast 2.0 funding tags at channel level */
-    xmlNodePtr funding_node = channel->children;
-    while (funding_node) {
-        if (funding_node->type == XML_ELEMENT_NODE && 
-            xmlStrcmp(funding_node->name, (const xmlChar *)"funding") == 0 &&
-            funding_node->ns && xmlStrcmp(funding_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-            
-            PodcastFunding *funding = g_new0(PodcastFunding, 1);
-            
-            xmlChar *url = xmlGetProp(funding_node, (const xmlChar *)"url");
-            xmlChar *message = xmlNodeGetContent(funding_node);
-            
-            if (url) {
-                funding->url = g_strdup((gchar *)url);
-                xmlFree(url);
-            }
-            if (message) {
-                funding->message = g_strdup((gchar *)message);
-                xmlFree(message);
-            }
-            
-            if (funding->url) {
-                podcast->funding = g_list_append(podcast->funding, funding);
-            } else {
-                podcast_funding_free(funding);
-            }
-        }
-        funding_node = funding_node->next;
-    }
-    
-    /* Parse Podcast 2.0 value tags at channel level */
-    xmlNodePtr value_node = channel->children;
-    while (value_node) {
-        if (value_node->type == XML_ELEMENT_NODE && 
-            xmlStrcmp(value_node->name, (const xmlChar *)"value") == 0 &&
-            value_node->ns && xmlStrcmp(value_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-            
-            PodcastValue *value = g_new0(PodcastValue, 1);
-            
-            xmlChar *type = xmlGetProp(value_node, (const xmlChar *)"type");
-            xmlChar *method = xmlGetProp(value_node, (const xmlChar *)"method");
-            xmlChar *suggested = xmlGetProp(value_node, (const xmlChar *)"suggested");
-            
-            if (type) {
-                value->type = g_strdup((gchar *)type);
-                xmlFree(type);
-            }
-            if (method) {
-                value->method = g_strdup((gchar *)method);
-                xmlFree(method);
-            }
-            if (suggested) {
-                value->suggested = g_strdup((gchar *)suggested);
-                xmlFree(suggested);
-            }
-            
-            /* Parse valueRecipient child elements */
-            value->recipients = NULL;
-            xmlNodePtr recipient_node = value_node->children;
-            while (recipient_node) {
-                if (recipient_node->type == XML_ELEMENT_NODE && 
-                    xmlStrcmp(recipient_node->name, (const xmlChar *)"valueRecipient") == 0 &&
-                    recipient_node->ns && xmlStrcmp(recipient_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-                    
-                    ValueRecipient *recipient = g_new0(ValueRecipient, 1);
-                    
-                    xmlChar *name = xmlGetProp(recipient_node, (const xmlChar *)"name");
-                    xmlChar *type = xmlGetProp(recipient_node, (const xmlChar *)"type");
-                    xmlChar *address = xmlGetProp(recipient_node, (const xmlChar *)"address");
-                    xmlChar *split_str = xmlGetProp(recipient_node, (const xmlChar *)"split");
-                    xmlChar *fee_str = xmlGetProp(recipient_node, (const xmlChar *)"fee");
-                    xmlChar *custom_key = xmlGetProp(recipient_node, (const xmlChar *)"customKey");
-                    xmlChar *custom_value = xmlGetProp(recipient_node, (const xmlChar *)"customValue");
-                    
-                    if (name) {
-                        recipient->name = g_strdup((gchar *)name);
-                        xmlFree(name);
-                    }
-                    if (type) {
-                        recipient->type = g_strdup((gchar *)type);
-                        xmlFree(type);
-                    }
-                    if (address) {
-                        recipient->address = g_strdup((gchar *)address);
-                        xmlFree(address);
-                    }
-                    if (split_str) {
-                        recipient->split = atoi((gchar *)split_str);
-                        xmlFree(split_str);
-                    }
-                    if (fee_str) {
-                        recipient->fee = (xmlStrcmp(fee_str, (const xmlChar *)"true") == 0);
-                        xmlFree(fee_str);
-                    }
-                    if (custom_key) {
-                        recipient->custom_key = g_strdup((gchar *)custom_key);
-                        xmlFree(custom_key);
-                    }
-                    if (custom_value) {
-                        recipient->custom_value = g_strdup((gchar *)custom_value);
-                        xmlFree(custom_value);
-                    }
-                    
-                    value->recipients = g_list_append(value->recipients, recipient);
-                    g_print("  Found value recipient: %s (%s) - %d%% split\n",
-                            recipient->name ? recipient->name : "Unknown",
-                            recipient->address ? recipient->address : "No address",
-                            recipient->split);
-                }
-                recipient_node = recipient_node->next;
-            }
-            
-            if (value->type && value->method) {
-                podcast->value = g_list_append(podcast->value, value);
-                g_print("Found podcast value: type=%s, method=%s, suggested=%s\n", 
-                        value->type ? value->type : "None",
-                        value->method ? value->method : "None",
-                        value->suggested ? value->suggested : "None");
-            } else {
-                podcast_value_free(value);
-            }
-        }
-        value_node = value_node->next;
-    }
+    /* Parse all Podcast 2.0 elements (images, funding, value) using helper function */
+    parse_podcast_ns_elements(channel, &podcast->images, &podcast->funding, &podcast->value);
     
     xmlFreeDoc(doc);
     return podcast;
+}
+
+/* Public wrapper that creates a new curl handle */
+Podcast* podcast_parse_feed(const gchar *feed_url) {
+    return podcast_parse_feed_internal(feed_url, NULL);
 }
 
 GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
@@ -740,7 +770,7 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
                     }
                 } else {
                     /* Plain seconds */
-                    episode->duration = atoi(duration_str);
+                    episode->duration = (gint)g_ascii_strtoll(duration_str, NULL, 10);
                 }
                 xmlFree(content);
             }
@@ -772,18 +802,11 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
             while (transcript_node) {
                 if (transcript_node->type == XML_ELEMENT_NODE && 
                     xmlStrcmp(transcript_node->name, (const xmlChar *)"transcript") == 0 &&
-                    transcript_node->ns && xmlStrcmp(transcript_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-                    xmlChar *url = xmlGetProp(transcript_node, (const xmlChar *)"url");
-                    xmlChar *type = xmlGetProp(transcript_node, (const xmlChar *)"type");
-                    
-                    if (url) {
-                        episode->transcript_url = g_strdup((gchar *)url);
-                        xmlFree(url);
-                        g_print("Found transcript URL: %s\n", episode->transcript_url);
-                    }
-                    if (type) {
-                        episode->transcript_type = g_strdup((gchar *)type);
-                        xmlFree(type);
+                    is_podcast_namespace(transcript_node)) {
+                    episode->transcript_url = xml_get_prop_string(transcript_node, "url");
+                    episode->transcript_type = xml_get_prop_string(transcript_node, "type");
+                    if (episode->transcript_url) {
+                        g_debug("Found transcript URL: %s", episode->transcript_url);
                     }
                     break;
                 }
@@ -795,60 +818,15 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
             while (chapters_node) {
                 if (chapters_node->type == XML_ELEMENT_NODE && 
                     xmlStrcmp(chapters_node->name, (const xmlChar *)"chapters") == 0 &&
-                    chapters_node->ns && xmlStrcmp(chapters_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-                    xmlChar *url = xmlGetProp(chapters_node, (const xmlChar *)"url");
-                    xmlChar *type = xmlGetProp(chapters_node, (const xmlChar *)"type");
-                    
-                    if (url) {
-                        episode->chapters_url = g_strdup((gchar *)url);
-                        xmlFree(url);
-                    }
-                    if (type) {
-                        episode->chapters_type = g_strdup((gchar *)type);
-                        xmlFree(type);
-                    }
+                    is_podcast_namespace(chapters_node)) {
+                    episode->chapters_url = xml_get_prop_string(chapters_node, "url");
+                    episode->chapters_type = xml_get_prop_string(chapters_node, "type");
                     break;
                 }
                 chapters_node = chapters_node->next;
             }
             
-            /* Look for <podcast:funding> elements */
-            xmlNodePtr funding_node = item->children;
-            while (funding_node) {
-                if (funding_node->type == XML_ELEMENT_NODE && 
-                    xmlStrcmp(funding_node->name, (const xmlChar *)"funding") == 0 &&
-                    funding_node->ns && xmlStrcmp(funding_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-                    
-                    PodcastFunding *funding = g_new0(PodcastFunding, 1);
-                    
-                    xmlChar *url = xmlGetProp(funding_node, (const xmlChar *)"url");
-                    xmlChar *message = xmlGetProp(funding_node, (const xmlChar *)"message");
-                    xmlChar *platform = xmlNodeGetContent(funding_node);
-                    
-                    if (url) {
-                        funding->url = g_strdup((gchar *)url);
-                        xmlFree(url);
-                    }
-                    if (message) {
-                        funding->message = g_strdup((gchar *)message);
-                        xmlFree(message);
-                    }
-                    if (platform) {
-                        funding->platform = g_strdup((gchar *)platform);
-                        xmlFree(platform);
-                    }
-                    
-                    if (funding->url) {
-                        episode->funding = g_list_append(episode->funding, funding);
-                        g_print("Found funding: %s -> %s (%s)\n", 
-                                funding->platform ? funding->platform : "Unknown",
-                                funding->url, funding->message ? funding->message : "No message");
-                    } else {
-                        podcast_funding_free(funding);
-                    }
-                }
-                funding_node = funding_node->next;
-            }
+            /* Parse season and episode number */
             if ((content = get_node_ns_prefix_content(item, "podcast", "season"))) {
                 episode->season = g_strdup((gchar *)content);
                 xmlFree(content);
@@ -863,7 +841,7 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
             while (locked_node) {
                 if (locked_node->type == XML_ELEMENT_NODE && 
                     xmlStrcmp(locked_node->name, (const xmlChar *)"locked") == 0 &&
-                    locked_node->ns && xmlStrcmp(locked_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
+                    is_podcast_namespace(locked_node)) {
                     xmlChar *locked_val = xmlNodeGetContent(locked_node);
                     if (locked_val) {
                         episode->locked = (xmlStrcmp(locked_val, (const xmlChar *)"yes") == 0);
@@ -874,169 +852,22 @@ GList* podcast_parse_episodes(const gchar *xml_data, gint podcast_id) {
                 locked_node = locked_node->next;
             }
             
-            /* Look for <podcast:image> elements */
-            xmlNodePtr episode_image_node = item->children;
-            while (episode_image_node) {
-                if (episode_image_node->type == XML_ELEMENT_NODE && 
-                    xmlStrcmp(episode_image_node->name, (const xmlChar *)"image") == 0 &&
-                    episode_image_node->ns && xmlStrcmp(episode_image_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-                    
-                    PodcastImage *image = g_new0(PodcastImage, 1);
-                    
-                    xmlChar *href = xmlGetProp(episode_image_node, (const xmlChar *)"href");
-                    xmlChar *alt = xmlGetProp(episode_image_node, (const xmlChar *)"alt");
-                    xmlChar *aspect_ratio = xmlGetProp(episode_image_node, (const xmlChar *)"aspect-ratio");
-                    xmlChar *width_str = xmlGetProp(episode_image_node, (const xmlChar *)"width");
-                    xmlChar *height_str = xmlGetProp(episode_image_node, (const xmlChar *)"height");
-                    xmlChar *type = xmlGetProp(episode_image_node, (const xmlChar *)"type");
-                    xmlChar *purpose = xmlGetProp(episode_image_node, (const xmlChar *)"purpose");
-                    
-                    if (href) {
-                        image->href = g_strdup((gchar *)href);
-                        xmlFree(href);
-                    }
-                    if (alt) {
-                        image->alt = g_strdup((gchar *)alt);
-                        xmlFree(alt);
-                    }
-                    if (aspect_ratio) {
-                        image->aspect_ratio = g_strdup((gchar *)aspect_ratio);
-                        xmlFree(aspect_ratio);
-                    }
-                    if (width_str) {
-                        image->width = atoi((gchar *)width_str);
-                        xmlFree(width_str);
-                    }
-                    if (height_str) {
-                        image->height = atoi((gchar *)height_str);
-                        xmlFree(height_str);
-                    }
-                    if (type) {
-                        image->type = g_strdup((gchar *)type);
-                        xmlFree(type);
-                    }
-                    if (purpose) {
-                        image->purpose = g_strdup((gchar *)purpose);
-                        xmlFree(purpose);
-                    }
-                    
-                    if (image->href) {
-                        episode->images = g_list_append(episode->images, image);
-                    } else {
-                        podcast_image_free(image);
-                    }
-                }
-                episode_image_node = episode_image_node->next;
-            }
+            /* Parse all Podcast 2.0 elements (images, funding, value) using helper function */
+            parse_podcast_ns_elements(item, &episode->images, &episode->funding, &episode->value);
             
-            /* Look for <podcast:value> elements */
-            xmlNodePtr episode_value_node = item->children;
-            while (episode_value_node) {
-                if (episode_value_node->type == XML_ELEMENT_NODE && 
-                    xmlStrcmp(episode_value_node->name, (const xmlChar *)"value") == 0 &&
-                    episode_value_node->ns && xmlStrcmp(episode_value_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-                    
-                    PodcastValue *value = g_new0(PodcastValue, 1);
-                    
-                    xmlChar *type = xmlGetProp(episode_value_node, (const xmlChar *)"type");
-                    xmlChar *method = xmlGetProp(episode_value_node, (const xmlChar *)"method");
-                    xmlChar *suggested = xmlGetProp(episode_value_node, (const xmlChar *)"suggested");
-                    
-                    if (type) {
-                        value->type = g_strdup((gchar *)type);
-                        xmlFree(type);
-                    }
-                    if (method) {
-                        value->method = g_strdup((gchar *)method);
-                        xmlFree(method);
-                    }
-                    if (suggested) {
-                        value->suggested = g_strdup((gchar *)suggested);
-                        xmlFree(suggested);
-                    }
-                    
-                    /* Parse valueRecipient child elements */
-                    value->recipients = NULL;
-                    xmlNodePtr recipient_node = episode_value_node->children;
-                    while (recipient_node) {
-                        if (recipient_node->type == XML_ELEMENT_NODE && 
-                            xmlStrcmp(recipient_node->name, (const xmlChar *)"valueRecipient") == 0 &&
-                            recipient_node->ns && xmlStrcmp(recipient_node->ns->prefix, (const xmlChar *)"podcast") == 0) {
-                            
-                            ValueRecipient *recipient = g_new0(ValueRecipient, 1);
-                            
-                            xmlChar *name = xmlGetProp(recipient_node, (const xmlChar *)"name");
-                            xmlChar *type = xmlGetProp(recipient_node, (const xmlChar *)"type");
-                            xmlChar *address = xmlGetProp(recipient_node, (const xmlChar *)"address");
-                            xmlChar *split_str = xmlGetProp(recipient_node, (const xmlChar *)"split");
-                            xmlChar *fee_str = xmlGetProp(recipient_node, (const xmlChar *)"fee");
-                            xmlChar *custom_key = xmlGetProp(recipient_node, (const xmlChar *)"customKey");
-                            xmlChar *custom_value = xmlGetProp(recipient_node, (const xmlChar *)"customValue");
-                            
-                            if (name) {
-                                recipient->name = g_strdup((gchar *)name);
-                                xmlFree(name);
-                            }
-                            if (type) {
-                                recipient->type = g_strdup((gchar *)type);
-                                xmlFree(type);
-                            }
-                            if (address) {
-                                recipient->address = g_strdup((gchar *)address);
-                                xmlFree(address);
-                            }
-                            if (split_str) {
-                                recipient->split = atoi((gchar *)split_str);
-                                xmlFree(split_str);
-                            }
-                            if (fee_str) {
-                                recipient->fee = (xmlStrcmp(fee_str, (const xmlChar *)"true") == 0);
-                                xmlFree(fee_str);
-                            }
-                            if (custom_key) {
-                                recipient->custom_key = g_strdup((gchar *)custom_key);
-                                xmlFree(custom_key);
-                            }
-                            if (custom_value) {
-                                recipient->custom_value = g_strdup((gchar *)custom_value);
-                                xmlFree(custom_value);
-                            }
-                            
-                            value->recipients = g_list_append(value->recipients, recipient);
-                            g_print("    Found episode value recipient: %s (%s) - %d%% split\n",
-                                    recipient->name ? recipient->name : "Unknown",
-                                    recipient->address ? recipient->address : "No address",
-                                    recipient->split);
-                        }
-                        recipient_node = recipient_node->next;
-                    }
-                    
-                    if (value->type && value->method) {
-                        episode->value = g_list_append(episode->value, value);
-                        g_print("Found episode value: type=%s, method=%s, suggested=%s\n", 
-                                value->type ? value->type : "None",
-                                value->method ? value->method : "None",
-                                value->suggested ? value->suggested : "None");
-                    } else {
-                        podcast_value_free(value);
-                    }
-                }
-                episode_value_node = episode_value_node->next;
-            }
-            
-            episodes = g_list_append(episodes, episode);
+            episodes = g_list_prepend(episodes, episode);
         }
         item = item->next;
     }
     
     xmlFreeDoc(doc);
-    return episodes;
+    return g_list_reverse(episodes);
 }
 
 gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_url) {
     if (!manager || !feed_url) return FALSE;
     
-    g_print("Subscribing to podcast: %s\n", feed_url);
+    g_debug("Subscribing to podcast: %s", feed_url);
     
     Podcast *podcast = podcast_parse_feed(feed_url);
     if (!podcast) {
@@ -1044,13 +875,13 @@ gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_ur
         return FALSE;
     }
     
-    g_print("Subscribed to: %s\n", podcast->title);
+    g_debug("Subscribed to: %s", podcast->title);
     
     /* Check if already subscribed */
     for (GList *l = manager->podcasts; l != NULL; l = l->next) {
         Podcast *existing = (Podcast *)l->data;
         if (g_strcmp0(existing->feed_url, feed_url) == 0) {
-            g_print("Already subscribed to: %s\n", existing->title);
+            g_debug("Already subscribed to: %s", existing->title);
             podcast_free(podcast);
             return TRUE;  /* Not an error, just already exists */
         }
@@ -1108,7 +939,7 @@ gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_ur
             }
         }
         
-        g_print("Added %d episodes\n", g_list_length(episodes));
+        g_debug("Added %d episodes", g_list_length(episodes));
         g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
     }
     
@@ -1116,9 +947,49 @@ gboolean podcast_manager_subscribe(PodcastManager *manager, const gchar *feed_ur
 }
 
 gboolean podcast_manager_unsubscribe(PodcastManager *manager, gint podcast_id) {
-    if (!manager) return FALSE;
+    if (!manager || !manager->database) return FALSE;
     
-    /* TODO: Remove from database and delete downloaded episodes */
+    /* Find the podcast in memory and get episodes for cleanup */
+    Podcast *podcast = NULL;
+    GList *podcast_link = NULL;
+    for (GList *l = manager->podcasts; l != NULL; l = l->next) {
+        Podcast *p = (Podcast *)l->data;
+        if (p->id == podcast_id) {
+            podcast = p;
+            podcast_link = l;
+            break;
+        }
+    }
+    
+    if (!podcast) {
+        g_warning("Podcast not found with ID: %d", podcast_id);
+        return FALSE;
+    }
+    
+    g_debug("Unsubscribing from podcast: %s", podcast->title);
+    
+    /* Delete downloaded episode files */
+    GList *episodes = database_get_podcast_episodes(manager->database, podcast_id);
+    for (GList *l = episodes; l != NULL; l = l->next) {
+        PodcastEpisode *episode = (PodcastEpisode *)l->data;
+        if (episode->downloaded && episode->local_file_path) {
+            if (g_file_test(episode->local_file_path, G_FILE_TEST_EXISTS)) {
+                g_unlink(episode->local_file_path);
+            }
+        }
+    }
+    g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
+    
+    /* Remove from database */
+    if (!database_delete_podcast(manager->database, podcast_id)) {
+        g_warning("Failed to delete podcast from database");
+        return FALSE;
+    }
+    
+    /* Remove from in-memory list */
+    manager->podcasts = g_list_remove_link(manager->podcasts, podcast_link);
+    podcast_free(podcast);
+    g_list_free(podcast_link);
     
     return TRUE;
 }
@@ -1141,10 +1012,10 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
         return;
     }
     
-    g_print("Updating podcast feed: %s\n", podcast->title);
+    g_debug("Updating podcast feed: %s", podcast->title);
     
-    /* Re-parse podcast-level information (including funding) */
-    Podcast *updated_podcast = podcast_parse_feed(podcast->feed_url);
+    /* Re-parse podcast-level information (including funding) using reusable handle */
+    Podcast *updated_podcast = podcast_parse_feed_internal(podcast->feed_url, manager->curl_handle);
     if (updated_podcast && updated_podcast->funding) {
         database_save_podcast_funding(manager->database, podcast_id, updated_podcast->funding);
         
@@ -1167,8 +1038,8 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
         podcast_free(updated_podcast);
     }
     
-    /* Fetch and parse episodes */
-    gchar *xml_data = fetch_url(podcast->feed_url);
+    /* Fetch and parse episodes using reusable handle */
+    gchar *xml_data = fetch_url_with_handle(podcast->feed_url, manager->curl_handle);
     if (!xml_data) {
         g_warning("Failed to fetch feed\n");
         return;
@@ -1204,7 +1075,7 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
         }
     }
     
-    g_print("Updated %d episodes\n", g_list_length(episodes));
+    g_debug("Updated %d episodes", g_list_length(episodes));
     g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
     
     /* Update last_fetched timestamp */
@@ -1214,12 +1085,45 @@ void podcast_manager_update_feed(PodcastManager *manager, gint podcast_id) {
 void podcast_manager_update_all_feeds(PodcastManager *manager) {
     if (!manager) return;
     
-    g_print("Automatically checking for new podcast episodes...\n");
+    /* Don't start if already updating */
+    if (manager->update_in_progress) {
+        g_debug("Feed update already in progress");
+        return;
+    }
+    
+    manager->update_in_progress = TRUE;
+    manager->update_cancelled = FALSE;
+    
+    g_debug("Automatically checking for new podcast episodes...");
     
     for (GList *l = manager->podcasts; l != NULL; l = l->next) {
+        /* Check for cancellation before each feed */
+        if (manager->update_cancelled) {
+            g_debug("Feed update cancelled");
+            break;
+        }
+        
         Podcast *podcast = (Podcast *)l->data;
         podcast_manager_update_feed(manager, podcast->id);
     }
+    
+    manager->update_in_progress = FALSE;
+    manager->update_cancelled = FALSE;
+}
+
+/* Cancel any ongoing feed updates */
+void podcast_manager_cancel_updates(PodcastManager *manager) {
+    if (!manager) return;
+    
+    if (manager->update_in_progress) {
+        manager->update_cancelled = TRUE;
+        g_debug("Requesting feed update cancellation...");
+    }
+}
+
+/* Check if feed update is in progress */
+gboolean podcast_manager_is_updating(PodcastManager *manager) {
+    return manager ? manager->update_in_progress : FALSE;
 }
 
 /* Timer callback for automatic feed updates */
@@ -1398,7 +1302,7 @@ cleanup:
     g_free(local_path);
     g_free(error_msg);
     
-    /* Free the episode copy (only the fields we allocated) */
+    /* Free the minimal episode copy created in podcast_episode_download */
     g_free(episode->enclosure_url);
     g_free(episode->title);
     g_free(episode);
@@ -1416,13 +1320,21 @@ void podcast_episode_download(PodcastManager *manager, PodcastEpisode *episode,
     g_mutex_lock(&manager->downloads_mutex);
     if (g_hash_table_contains(manager->active_downloads, GINT_TO_POINTER(episode->id))) {
         g_mutex_unlock(&manager->downloads_mutex);
-        g_print("Episode is already being downloaded\n");
+        g_debug("Episode is already being downloaded");
         return;
     }
     
+    /* Create a minimal copy of the episode for the download thread.
+     * This avoids ownership issues - caller keeps ownership of original episode. */
+    PodcastEpisode *episode_copy = g_new0(PodcastEpisode, 1);
+    episode_copy->id = episode->id;
+    episode_copy->podcast_id = episode->podcast_id;
+    episode_copy->enclosure_url = g_strdup(episode->enclosure_url);
+    episode_copy->title = g_strdup(episode->title);
+    
     /* Create download task */
     DownloadTask *task = g_new0(DownloadTask, 1);
-    task->episode = episode;  /* Episode will be freed by thread */
+    task->episode = episode_copy;  /* Thread owns this copy and will free it */
     task->manager = manager;
     task->progress_callback = progress_cb;
     task->complete_callback = complete_cb;
@@ -1477,23 +1389,47 @@ void podcast_episode_cancel_download(PodcastManager *manager, gint episode_id) {
 }
 
 void podcast_episode_delete(PodcastManager *manager, PodcastEpisode *episode) {
-    /* TODO: Delete local file */
-    (void)manager;
-    (void)episode;
+    if (!manager || !episode) return;
+    
+    /* Delete the local file if it exists */
+    if (episode->local_file_path && g_file_test(episode->local_file_path, G_FILE_TEST_EXISTS)) {
+        if (g_unlink(episode->local_file_path) == 0) {
+            g_debug("Deleted episode file: %s", episode->local_file_path);
+        } else {
+            g_warning("Failed to delete episode file: %s", episode->local_file_path);
+        }
+    }
+    
+    /* Update database to clear download status */
+    database_clear_episode_download(manager->database, episode->id);
 }
 
 void podcast_episode_mark_played(PodcastManager *manager, gint episode_id, gboolean played) {
-    /* TODO: Update database */
-    (void)manager;
-    (void)episode_id;
-    (void)played;
+    if (!manager || !manager->database || episode_id <= 0) return;
+    
+    /* Get current position to preserve it */
+    PodcastEpisode *episode = database_get_episode_by_id(manager->database, episode_id);
+    gint position = episode ? episode->play_position : 0;
+    
+    database_update_episode_progress(manager->database, episode_id, position, played);
+    
+    if (episode) {
+        podcast_episode_free(episode);
+    }
 }
 
 void podcast_episode_update_position(PodcastManager *manager, gint episode_id, gint position) {
-    /* TODO: Update playback position in database */
-    (void)manager;
-    (void)episode_id;
-    (void)position;
+    if (!manager || !manager->database || episode_id <= 0) return;
+    
+    /* Get current played status to preserve it */
+    PodcastEpisode *episode = database_get_episode_by_id(manager->database, episode_id);
+    gboolean played = episode ? episode->played : FALSE;
+    
+    database_update_episode_progress(manager->database, episode_id, position, played);
+    
+    if (episode) {
+        podcast_episode_free(episode);
+    }
 }
 
 static GList* parse_chapters_json(const gchar *json_data) {
@@ -1528,7 +1464,7 @@ static GList* parse_chapters_json(const gchar *json_data) {
     JsonArray *chapters_array = json_object_get_array_member(root_obj, "chapters");
     guint n_chapters = json_array_get_length(chapters_array);
     
-    g_print("Parsing %u chapters from JSON\n", n_chapters);
+    g_debug("Parsing %u chapters from JSON", n_chapters);
     
     for (guint i = 0; i < n_chapters; i++) {
         JsonObject *chapter_obj = json_array_get_object_element(chapters_array, i);
@@ -1562,7 +1498,7 @@ static GList* parse_chapters_json(const gchar *json_data) {
         chapters = g_list_append(chapters, chapter);
         
         if (chapter->title) {
-            g_print("  Chapter %u: %.0fs - %s\n", i, chapter->start_time, chapter->title);
+            g_debug("  Chapter %u: %.0fs - %s", i, chapter->start_time, chapter->title);
         }
     }
     

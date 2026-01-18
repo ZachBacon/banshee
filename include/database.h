@@ -81,6 +81,8 @@ GList* database_get_podcast_episodes(Database *db, gint podcast_id);
 PodcastEpisode* database_get_episode_by_id(Database *db, gint episode_id);
 gboolean database_update_episode_progress(Database *db, gint episode_id, gint position, gboolean played);
 gboolean database_update_episode_downloaded(Database *db, gint episode_id, const gchar *local_path);
+gboolean database_delete_podcast(Database *db, gint podcast_id);
+gboolean database_clear_episode_download(Database *db, gint episode_id);
 
 /* Funding operations */
 gboolean database_save_episode_funding(Database *db, gint episode_id, GList *funding_list);
