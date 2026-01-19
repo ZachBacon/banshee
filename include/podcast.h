@@ -172,7 +172,7 @@ struct _PodcastManager {
     GHashTable *active_downloads; /* episode_id -> DownloadTask */
     GMutex downloads_mutex;
     guint update_timer_id;  /* Timer for automatic feed updates */
-    gint update_interval_days;  /* Update interval in days */
+    gint update_interval_minutes;  /* Update interval in minutes */
     volatile gboolean update_cancelled;  /* Flag to cancel feed updates */
     gboolean update_in_progress;  /* Flag indicating update is running */
     void *curl_handle;  /* Reusable curl handle for feed updates (CURL*) */
@@ -183,7 +183,7 @@ PodcastManager* podcast_manager_new(Database *database);
 void podcast_manager_free(PodcastManager *manager);
 
 /* Auto-update timer management */
-void podcast_manager_start_auto_update(PodcastManager *manager, gint interval_days);
+void podcast_manager_start_auto_update(PodcastManager *manager, gint interval_minutes);
 void podcast_manager_stop_auto_update(PodcastManager *manager);
 
 /* Podcast operations */

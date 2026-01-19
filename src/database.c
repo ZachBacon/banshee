@@ -11,6 +11,7 @@ static const char *CREATE_TRACKS_TABLE =
     "artist TEXT,"
     "album TEXT,"
     "genre TEXT,"
+    "track_number INTEGER DEFAULT 0,"
     "year INTEGER,"
     "duration INTEGER,"
     "file_path TEXT NOT NULL UNIQUE,"
@@ -329,14 +330,21 @@ gboolean database_init_tables(Database *db) {
         return FALSE;
     }
     
+    /* Migration: Add track_number column to existing tracks table if it doesn't exist */
+    rc = sqlite3_exec(db->db, "ALTER TABLE tracks ADD COLUMN track_number INTEGER DEFAULT 0;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        /* Column may already exist, that's fine */
+        sqlite3_free(err_msg);
+    }
+    
     return TRUE;
 }
 
 gint database_add_track(Database *db, Track *track) {
     if (!db || !db->db || !track) return -1;
     
-    const char *sql = "INSERT INTO tracks (title, artist, album, genre, duration, file_path, date_added) "
-                      "VALUES (?, ?, ?, ?, ?, ?, ?);";
+    const char *sql = "INSERT INTO tracks (title, artist, album, genre, track_number, duration, file_path, date_added) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?);";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -350,9 +358,10 @@ gint database_add_track(Database *db, Track *track) {
     sqlite3_bind_text(stmt, 2, track->artist, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 3, track->album, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 4, track->genre, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 5, track->duration);
-    sqlite3_bind_text(stmt, 6, track->file_path, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(stmt, 7, g_get_real_time() / 1000000);
+    sqlite3_bind_int(stmt, 5, track->track_number);
+    sqlite3_bind_int(stmt, 6, track->duration);
+    sqlite3_bind_text(stmt, 7, track->file_path, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 8, g_get_real_time() / 1000000);
     
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -368,7 +377,7 @@ gint database_add_track(Database *db, Track *track) {
 Track* database_get_track(Database *db, gint track_id) {
     if (!db || !db->db) return NULL;
     
-    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE id = ?;";
     
     sqlite3_stmt *stmt;
@@ -388,10 +397,11 @@ Track* database_get_track(Database *db, gint track_id) {
         track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        track->duration = sqlite3_column_int(stmt, 5);
-        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        track->play_count = sqlite3_column_int(stmt, 7);
-        track->date_added = sqlite3_column_int64(stmt, 8);
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
     }
     
     sqlite3_finalize(stmt);
@@ -402,13 +412,13 @@ GList* database_get_all_tracks(Database *db) {
     if (!db || !db->db) return NULL;
     
     /* Get only audio files from tracks table (positive filter for audio extensions) */
-    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE "
                       "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
                       "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
                       "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
                       "LOWER(file_path) LIKE '%.mpc' "
-                      "ORDER BY title;";
+                      "ORDER BY artist, album, track_number, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -425,10 +435,11 @@ GList* database_get_all_tracks(Database *db) {
         track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        track->duration = sqlite3_column_int(stmt, 5);
-        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        track->play_count = sqlite3_column_int(stmt, 7);
-        track->date_added = sqlite3_column_int64(stmt, 8);
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
         
         tracks = g_list_append(tracks, track);
     }
@@ -465,12 +476,12 @@ gint database_get_audio_track_count(Database *db) {
 GList* database_get_tracks_by_artist(Database *db, const gchar *artist) {
     if (!db || !db->db || !artist) return NULL;
     
-    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE artist = ? AND ("
                       "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
                       "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
                       "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                      "LOWER(file_path) LIKE '%.mpc') ORDER BY album, title;";
+                      "LOWER(file_path) LIKE '%.mpc') ORDER BY album, track_number, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -489,10 +500,11 @@ GList* database_get_tracks_by_artist(Database *db, const gchar *artist) {
         track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        track->duration = sqlite3_column_int(stmt, 5);
-        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        track->play_count = sqlite3_column_int(stmt, 7);
-        track->date_added = sqlite3_column_int64(stmt, 8);
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
         tracks = g_list_append(tracks, track);
     }
     
@@ -504,18 +516,18 @@ GList* database_get_tracks_by_album(Database *db, const gchar *artist, const gch
     if (!db || !db->db || !album) return NULL;
     
     const char *sql = artist ? 
-        "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+        "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
         "FROM tracks WHERE artist = ? AND album = ? AND ("
         "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
         "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
         "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-        "LOWER(file_path) LIKE '%.mpc') ORDER BY title;" :
-        "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+        "LOWER(file_path) LIKE '%.mpc') ORDER BY track_number, title;" :
+        "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
         "FROM tracks WHERE album = ? AND ("
         "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
         "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
         "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-        "LOWER(file_path) LIKE '%.mpc') ORDER BY title;";
+        "LOWER(file_path) LIKE '%.mpc') ORDER BY track_number, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -539,10 +551,11 @@ GList* database_get_tracks_by_album(Database *db, const gchar *artist, const gch
         track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        track->duration = sqlite3_column_int(stmt, 5);
-        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        track->play_count = sqlite3_column_int(stmt, 7);
-        track->date_added = sqlite3_column_int64(stmt, 8);
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
         tracks = g_list_append(tracks, track);
     }
     
@@ -645,13 +658,13 @@ gboolean database_delete_track(Database *db, gint track_id) {
 GList* database_search_tracks(Database *db, const gchar *search_term) {
     if (!db || !db->db || !search_term) return NULL;
     
-    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?) AND ("
                       "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
                       "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
                       "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
                       "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
-                      "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY title;";
+                      "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY artist, album, track_number, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -674,10 +687,11 @@ GList* database_search_tracks(Database *db, const gchar *search_term) {
         track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        track->duration = sqlite3_column_int(stmt, 5);
-        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        track->play_count = sqlite3_column_int(stmt, 7);
-        track->date_added = sqlite3_column_int64(stmt, 8);
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
         tracks = g_list_append(tracks, track);
     }
     
@@ -690,7 +704,7 @@ GList* database_get_all_videos(Database *db) {
     if (!db || !db->db) return NULL;
     
     /* Get all files and filter by video extensions (case-insensitive) */
-    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE "
                       "LOWER(file_path) LIKE '%.mp4' OR LOWER(file_path) LIKE '%.mkv' OR LOWER(file_path) LIKE '%.avi' OR "
                       "LOWER(file_path) LIKE '%.mov' OR LOWER(file_path) LIKE '%.wmv' OR LOWER(file_path) LIKE '%.flv' OR "
@@ -716,10 +730,11 @@ GList* database_get_all_videos(Database *db) {
         video->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         video->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         video->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        video->duration = sqlite3_column_int(stmt, 5);
-        video->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        video->play_count = sqlite3_column_int(stmt, 7);
-        video->date_added = sqlite3_column_int64(stmt, 8);
+        video->track_number = sqlite3_column_int(stmt, 5);
+        video->duration = sqlite3_column_int(stmt, 6);
+        video->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        video->play_count = sqlite3_column_int(stmt, 8);
+        video->date_added = sqlite3_column_int64(stmt, 9);
         videos = g_list_append(videos, video);
     }
     
@@ -730,7 +745,7 @@ GList* database_get_all_videos(Database *db) {
 GList* database_search_videos(Database *db, const gchar *search_term) {
     if (!db || !db->db || !search_term) return NULL;
     
-    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?) AND ("
                       "file_path LIKE '%.mp4' OR file_path LIKE '%.mkv' OR file_path LIKE '%.avi' OR "
                       "file_path LIKE '%.mov' OR file_path LIKE '%.wmv' OR file_path LIKE '%.flv' OR "
@@ -762,10 +777,11 @@ GList* database_search_videos(Database *db, const gchar *search_term) {
         video->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         video->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         video->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        video->duration = sqlite3_column_int(stmt, 5);
-        video->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        video->play_count = sqlite3_column_int(stmt, 7);
-        video->date_added = sqlite3_column_int64(stmt, 8);
+        video->track_number = sqlite3_column_int(stmt, 5);
+        video->duration = sqlite3_column_int(stmt, 6);
+        video->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        video->play_count = sqlite3_column_int(stmt, 8);
+        video->date_added = sqlite3_column_int64(stmt, 9);
         videos = g_list_append(videos, video);
     }
     
@@ -949,7 +965,7 @@ gboolean database_increment_play_count(Database *db, gint track_id) {
 GList* database_get_most_played_tracks(Database *db, gint limit) {
     if (!db || !db->db) return NULL;
     
-    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE play_count > 0 AND ("
                       "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
                       "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
@@ -973,10 +989,11 @@ GList* database_get_most_played_tracks(Database *db, gint limit) {
         track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        track->duration = sqlite3_column_int(stmt, 5);
-        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        track->play_count = sqlite3_column_int(stmt, 7);
-        track->date_added = sqlite3_column_int64(stmt, 8);
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
         tracks = g_list_append(tracks, track);
     }
     
@@ -987,7 +1004,7 @@ GList* database_get_most_played_tracks(Database *db, gint limit) {
 GList* database_get_recent_tracks(Database *db, gint limit) {
     if (!db || !db->db) return NULL;
     
-    const char *sql = "SELECT id, title, artist, album, genre, duration, file_path, play_count, date_added "
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE "
                       "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
                       "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
@@ -1011,10 +1028,11 @@ GList* database_get_recent_tracks(Database *db, gint limit) {
         track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
         track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
-        track->duration = sqlite3_column_int(stmt, 5);
-        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
-        track->play_count = sqlite3_column_int(stmt, 7);
-        track->date_added = sqlite3_column_int64(stmt, 8);
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
         tracks = g_list_append(tracks, track);
     }
     
@@ -1846,6 +1864,15 @@ gboolean database_get_preference_bool(Database *db, const gchar *key, gboolean d
     if (!value_str) return default_value;
     
     gboolean result = (g_strcmp0(value_str, "true") == 0 || g_strcmp0(value_str, "1") == 0);
+    g_free(value_str);
+    return result;
+}
+
+gdouble database_get_preference_double(Database *db, const gchar *key, gdouble default_value) {
+    gchar *value_str = database_get_preference(db, key, NULL);
+    if (!value_str) return default_value;
+    
+    gdouble result = g_ascii_strtod(value_str, NULL);
     g_free(value_str);
     return result;
 }

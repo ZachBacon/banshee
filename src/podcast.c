@@ -162,7 +162,7 @@ PodcastManager* podcast_manager_new(Database *database) {
     PodcastManager *manager = g_new0(PodcastManager, 1);
     manager->database = database;
     manager->update_timer_id = 0;
-    manager->update_interval_days = 0;
+    manager->update_interval_minutes = 0;
     
     /* Initialize curl globally (thread-safe, only once) */
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -170,8 +170,14 @@ PodcastManager* podcast_manager_new(Database *database) {
     /* Load existing podcasts from database */
     manager->podcasts = database_get_podcasts(database);
     
-    /* Create download directory */
-    manager->download_dir = g_build_filename(g_get_user_data_dir(), "banshee", "podcasts", NULL);
+    /* Create download directory in user's Music folder (cross-platform) */
+    const gchar *music_dir = g_get_user_special_dir(G_USER_DIRECTORY_MUSIC);
+    if (music_dir) {
+        manager->download_dir = g_build_filename(music_dir, "Podcasts", NULL);
+    } else {
+        /* Fallback to home directory if Music folder not available */
+        manager->download_dir = g_build_filename(g_get_home_dir(), "Music", "Podcasts", NULL);
+    }
     g_mkdir_with_parents(manager->download_dir, 0755);
     
     /* Initialize downloads tracking - NULL destroy func since we manage task lifecycle */
@@ -1394,17 +1400,20 @@ static gboolean podcast_update_timer_callback(gpointer user_data) {
 }
 
 /* Start automatic feed update timer */
-void podcast_manager_start_auto_update(PodcastManager *manager, gint interval_days) {
+void podcast_manager_start_auto_update(PodcastManager *manager, gint interval_minutes) {
     if (!manager) return;
     
     /* Stop existing timer if any */
     podcast_manager_stop_auto_update(manager);
     
-    manager->update_interval_days = interval_days;
+    manager->update_interval_minutes = interval_minutes;
     
-    if (interval_days > 0) {
-        /* Convert days to seconds for GLib timer */
-        guint interval_seconds = interval_days * 24 * 60 * 60;
+    if (interval_minutes > 0) {
+        /* Convert minutes to seconds for GLib timer */
+        guint interval_seconds = interval_minutes * 60;
+        
+        g_print("Podcast auto-update: checking every %d minutes (%d hours, %d mins)\n",
+                interval_minutes, interval_minutes / 60, interval_minutes % 60);
         
         manager->update_timer_id = g_timeout_add_seconds(
             interval_seconds,

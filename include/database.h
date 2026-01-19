@@ -16,6 +16,7 @@ typedef struct {
     gchar *artist;
     gchar *album;
     gchar *genre;
+    gint track_number;
     gint duration;
     gchar *file_path;
     gint play_count;
@@ -106,6 +107,7 @@ gboolean database_set_preference(Database *db, const gchar *key, const gchar *va
 gchar* database_get_preference(Database *db, const gchar *key, const gchar *default_value);
 gint database_get_preference_int(Database *db, const gchar *key, gint default_value);
 gboolean database_get_preference_bool(Database *db, const gchar *key, gboolean default_value);
+gdouble database_get_preference_double(Database *db, const gchar *key, gdouble default_value);
 
 /* Cleanup helpers */
 void database_free_playlist(Playlist *playlist);

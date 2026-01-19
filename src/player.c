@@ -453,6 +453,7 @@ gboolean player_set_uri(MediaPlayer *player, const gchar *uri) {
     }
     
     g_object_set(player->playbin, "uri", full_uri, NULL);
+    g_print("Player: Setting URI: %s\n", full_uri);
     
     /* Configure buffering based on URI type */
     if (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://")) {
@@ -476,20 +477,20 @@ gboolean player_set_uri(MediaPlayer *player, const gchar *uri) {
     
     g_free(full_uri);
     
-    /* Set to ready state to get duration */
+    /* Set to paused state to preroll and get duration.
+     * Don't block waiting for state change - let GStreamer handle it async.
+     * Duration will be queried when playback starts. */
     gst_element_set_state(player->playbin, GST_STATE_PAUSED);
     
-    /* Wait for state change with timeout (5 seconds max to avoid hanging on live streams) */
-    GstState state;
-    GstStateChangeReturn state_ret = gst_element_get_state(player->playbin, &state, NULL, 5 * GST_SECOND);
-    
-    /* Query duration (may fail for live streams, which is OK) */
-    if (state_ret != GST_STATE_CHANGE_FAILURE) {
-        gst_element_query_duration(player->playbin, GST_FORMAT_TIME, &player->duration);
-    } else {
-        /* For live streams or slow connections, duration may not be available */
-        player->duration = GST_CLOCK_TIME_NONE;
+    /* For remote streams only, wait a bit for buffering.
+     * Local files don't need to wait. */
+    if (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://")) {
+        GstState state;
+        gst_element_get_state(player->playbin, &state, NULL, 2 * GST_SECOND);
     }
+    
+    /* Try to query duration (may not be available yet for async preroll) */
+    gst_element_query_duration(player->playbin, GST_FORMAT_TIME, &player->duration);
     
     return TRUE;
 }

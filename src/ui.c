@@ -11,6 +11,7 @@
 
 enum {
     COL_ID = 0,
+    COL_TRACK_NUM,
     COL_TITLE,
     COL_ARTIST,
     COL_ALBUM,
@@ -391,7 +392,9 @@ static void on_volume_button_clicked(GtkButton *button, gpointer user_data) {
     ui->volume_scale = gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL, 0, 100, 1);
     gtk_widget_set_size_request(ui->volume_scale, -1, 120);
     gtk_range_set_inverted(GTK_RANGE(ui->volume_scale), TRUE);
-    gtk_range_set_value(GTK_RANGE(ui->volume_scale), 50);
+    /* Initialize with player's current volume */
+    gdouble current_volume = player_get_volume(ui->player) * 100.0;
+    gtk_range_set_value(GTK_RANGE(ui->volume_scale), current_volume);
     gtk_scale_set_draw_value(GTK_SCALE(ui->volume_scale), TRUE);
     gtk_scale_set_value_pos(GTK_SCALE(ui->volume_scale), GTK_POS_BOTTOM);
     g_signal_connect(ui->volume_scale, "value-changed", G_CALLBACK(on_volume_changed), ui);
@@ -649,6 +652,7 @@ static GtkWidget* create_track_list(MediaPlayerUI *ui) {
     
     ui->track_store = gtk_list_store_new(NUM_COLS,
                                           G_TYPE_INT,     /* ID */
+                                          G_TYPE_INT,     /* Track # */
                                           G_TYPE_STRING,  /* Title */
                                           G_TYPE_STRING,  /* Artist */
                                           G_TYPE_STRING,  /* Album */
@@ -658,6 +662,11 @@ static GtkWidget* create_track_list(MediaPlayerUI *ui) {
     g_object_unref(ui->track_store);
     
     GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    
+    GtkTreeViewColumn *col_track_num = gtk_tree_view_column_new_with_attributes(
+        "#", renderer, "text", COL_TRACK_NUM, NULL);
+    gtk_tree_view_column_set_min_width(col_track_num, 40);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(ui->track_listview), col_track_num);
     
     GtkTreeViewColumn *col_title = gtk_tree_view_column_new_with_attributes(
         "Title", renderer, "text", COL_TITLE, NULL);
@@ -937,10 +946,16 @@ MediaPlayerUI* ui_new(MediaPlayer *player, Database *database) {
     ui->coverart_manager = coverart_manager_new();
     ui->podcast_manager = podcast_manager_new(database);
     
-    /* Start automatic podcast feed updates based on preference */
+    /* Start automatic podcast feed updates based on preference (in minutes) */
     if (ui->podcast_manager && database && database->db) {
-        gint update_interval = database_get_preference_int(database, "podcast_update_interval_days", 7);
+        gint update_interval = database_get_preference_int(database, "podcast_update_interval_minutes", 1440);  /* Default: 24 hours */
         podcast_manager_start_auto_update(ui->podcast_manager, update_interval);
+    }
+    
+    /* Restore saved volume preference */
+    if (database && database->db && player) {
+        gdouble saved_volume = database_get_preference_double(database, "volume", 0.5);
+        player_set_volume(player, saved_volume);
     }
     
     /* Create window */
@@ -1088,6 +1103,7 @@ static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks) {
         gtk_list_store_append(ui->track_store, &iter);
         gtk_list_store_set(ui->track_store, &iter,
                           COL_ID, track->id,
+                          COL_TRACK_NUM, track->track_number,
                           COL_TITLE, track->title,
                           COL_ARTIST, track->artist,
                           COL_ALBUM, track->album,
@@ -1111,6 +1127,7 @@ void ui_show_radio_stations(MediaPlayerUI *ui) {
         }
     }
     
+    gint station_num = 1;
     for (GList *l = stations; l != NULL; l = l->next) {
         RadioStation *station = (RadioStation *)l->data;
         
@@ -1120,6 +1137,7 @@ void ui_show_radio_stations(MediaPlayerUI *ui) {
         gtk_list_store_append(ui->track_store, &iter);
         gtk_list_store_set(ui->track_store, &iter,
                           COL_ID, station->id,
+                          COL_TRACK_NUM, station_num++,
                           COL_TITLE, station->name,
                           COL_ARTIST, station->genre ? station->genre : "Unknown",
                           COL_ALBUM, bitrate_str,
@@ -1296,6 +1314,14 @@ void ui_update_position(MediaPlayerUI *ui, gint64 position, gint64 duration) {
 void ui_free(MediaPlayerUI *ui) {
     if (!ui) return;
     
+    /* Save current volume preference */
+    if (ui->database && ui->database->db && ui->player) {
+        gdouble volume = player_get_volume(ui->player);
+        gchar *volume_str = g_strdup_printf("%.6f", volume);
+        database_set_preference(ui->database, "volume", volume_str);
+        g_free(volume_str);
+    }
+    
     /* Free podcast manager */
     if (ui->podcast_manager) {
         podcast_manager_free(ui->podcast_manager);
@@ -1379,23 +1405,35 @@ void ui_show_preferences_dialog(MediaPlayerUI *ui) {
     GtkWidget *update_label = gtk_label_new("Check for new episodes every:");
     gtk_box_pack_start(GTK_BOX(update_label_box), update_label, FALSE, FALSE, 0);
     
-    /* Spin button for days */
-    GtkWidget *update_spin = gtk_spin_button_new_with_range(1, 30, 1);
-    gtk_widget_set_size_request(update_spin, 80, -1);
-    
-    /* Load current preference - with validation */
-    gint current_days = 7;  /* default */
+    /* Load current preference in minutes - with validation */
+    gint current_minutes = 1440;  /* default: 24 hours */
     if (ui->database && ui->database->db) {
-        current_days = database_get_preference_int(ui->database, "podcast_update_interval_days", 7);
+        current_minutes = database_get_preference_int(ui->database, "podcast_update_interval_minutes", 1440);
     }
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(update_spin), (gdouble)current_days);
     
-    gtk_box_pack_start(GTK_BOX(update_label_box), update_spin, FALSE, FALSE, 0);
+    /* Calculate hours and remaining minutes */
+    gint current_hours = current_minutes / 60;
+    gint current_mins = current_minutes % 60;
     
-    GtkWidget *days_label = gtk_label_new("day(s)");
-    gtk_box_pack_start(GTK_BOX(update_label_box), days_label, FALSE, FALSE, 0);
+    /* Spin button for hours (0-168 = up to 1 week) */
+    GtkWidget *hours_spin = gtk_spin_button_new_with_range(0, 168, 1);
+    gtk_widget_set_size_request(hours_spin, 70, -1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(hours_spin), (gdouble)current_hours);
+    gtk_box_pack_start(GTK_BOX(update_label_box), hours_spin, FALSE, FALSE, 0);
     
-    GtkWidget *help_label = gtk_label_new("Banshee will automatically check for new podcast episodes at this interval.");
+    GtkWidget *hours_label = gtk_label_new("hour(s)");
+    gtk_box_pack_start(GTK_BOX(update_label_box), hours_label, FALSE, FALSE, 0);
+    
+    /* Spin button for minutes (0-59) */
+    GtkWidget *mins_spin = gtk_spin_button_new_with_range(0, 59, 5);
+    gtk_widget_set_size_request(mins_spin, 70, -1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(mins_spin), (gdouble)current_mins);
+    gtk_box_pack_start(GTK_BOX(update_label_box), mins_spin, FALSE, FALSE, 0);
+    
+    GtkWidget *mins_label = gtk_label_new("min(s)");
+    gtk_box_pack_start(GTK_BOX(update_label_box), mins_label, FALSE, FALSE, 0);
+    
+    GtkWidget *help_label = gtk_label_new("Banshee will automatically check for new podcast episodes at this interval.\nMinimum: 15 minutes. Set to 0 hours 0 minutes to disable.");
     gtk_label_set_line_wrap(GTK_LABEL(help_label), TRUE);
     gtk_widget_set_halign(help_label, GTK_ALIGN_START);
     gtk_style_context_add_class(gtk_widget_get_style_context(help_label), "dim-label");
@@ -1421,18 +1459,31 @@ void ui_show_preferences_dialog(MediaPlayerUI *ui) {
     gint response = gtk_dialog_run(GTK_DIALOG(dialog));
     
     if (response == GTK_RESPONSE_OK) {
-        /* Save podcast update interval */
-        gint days = (gint)gtk_spin_button_get_value(GTK_SPIN_BUTTON(update_spin));
-        gchar *days_str = g_strdup_printf("%d", days);
+        /* Calculate total minutes from hours and minutes */
+        gint hours = (gint)gtk_spin_button_get_value(GTK_SPIN_BUTTON(hours_spin));
+        gint mins = (gint)gtk_spin_button_get_value(GTK_SPIN_BUTTON(mins_spin));
+        gint total_minutes = hours * 60 + mins;
+        
+        /* Enforce minimum of 15 minutes (unless disabled with 0) */
+        if (total_minutes > 0 && total_minutes < 15) {
+            total_minutes = 15;
+        }
+        
+        gchar *minutes_str = g_strdup_printf("%d", total_minutes);
         
         if (ui->database && ui->database->db) {
-            gboolean success = database_set_preference(ui->database, "podcast_update_interval_days", days_str);
+            gboolean success = database_set_preference(ui->database, "podcast_update_interval_minutes", minutes_str);
             if (success) {
-                g_print("Preferences saved: Podcast update interval set to %d day(s)\n", days);
+                if (total_minutes == 0) {
+                    g_print("Preferences saved: Podcast auto-update disabled\n");
+                } else {
+                    g_print("Preferences saved: Podcast update interval set to %d hour(s) %d minute(s)\n", 
+                            total_minutes / 60, total_minutes % 60);
+                }
                 
                 /* Restart auto-update timer with new interval */
                 if (ui->podcast_manager) {
-                    podcast_manager_start_auto_update(ui->podcast_manager, days);
+                    podcast_manager_start_auto_update(ui->podcast_manager, total_minutes);
                 }
             } else {
                 g_printerr("Failed to save preferences\n");
@@ -1441,7 +1492,7 @@ void ui_show_preferences_dialog(MediaPlayerUI *ui) {
             g_printerr("Cannot save preferences: database is not available\n");
         }
         
-        g_free(days_str);
+        g_free(minutes_str);
     }
     
     gtk_widget_destroy(dialog);

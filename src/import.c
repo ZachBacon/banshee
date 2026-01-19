@@ -95,13 +95,14 @@ static void extract_tags_from_file(const gchar *filepath, Track *track) {
             gst_message_parse_tag(msg, &tags);
             
             gchar *title = NULL, *artist = NULL, *album = NULL, *genre = NULL;
-            guint year = 0;
+            guint year = 0, track_number = 0;
             
             gst_tag_list_get_string(tags, GST_TAG_TITLE, &title);
             gst_tag_list_get_string(tags, GST_TAG_ARTIST, &artist);
             gst_tag_list_get_string(tags, GST_TAG_ALBUM, &album);
             gst_tag_list_get_string(tags, GST_TAG_GENRE, &genre);
             gst_tag_list_get_uint(tags, GST_TAG_DATE_TIME, &year);
+            gst_tag_list_get_uint(tags, GST_TAG_TRACK_NUMBER, &track_number);
             
             if (title) {
                 g_free(track->title);
@@ -118,6 +119,9 @@ static void extract_tags_from_file(const gchar *filepath, Track *track) {
             if (genre) {
                 g_free(track->genre);
                 track->genre = genre;
+            }
+            if (track_number > 0) {
+                track->track_number = (gint)track_number;
             }
             
             gst_tag_list_unref(tags);
