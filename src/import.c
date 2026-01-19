@@ -179,9 +179,9 @@ static void scan_directory_recursive(const gchar *path, Database *db, CoverArtMa
                     g_print("Imported %d tracks...\r", *count);
                     fflush(stdout);
                     
-                    /* Process pending GTK events to keep UI responsive */
-                    while (gtk_events_pending()) {
-                        gtk_main_iteration();
+                    /* Process pending events to keep UI responsive (GTK4) */
+                    while (g_main_context_pending(NULL)) {
+                        g_main_context_iteration(NULL, FALSE);
                     }
                 }
             }
@@ -252,9 +252,9 @@ static void scan_audio_files_recursive(const gchar *path, Database *db, CoverArt
                     g_print("Imported %d audio tracks...\r", *count);
                     fflush(stdout);
                     
-                    /* Process pending GTK events to keep UI responsive */
-                    while (gtk_events_pending()) {
-                        gtk_main_iteration();
+                    /* Process pending events to keep UI responsive (GTK4) */
+                    while (g_main_context_pending(NULL)) {
+                        g_main_context_iteration(NULL, FALSE);
                     }
                 }
             }
@@ -301,9 +301,9 @@ static void scan_video_files_recursive(const gchar *path, Database *db, CoverArt
                     g_print("Imported %d video files...\r", *count);
                     fflush(stdout);
                     
-                    /* Process pending GTK events to keep UI responsive */
-                    while (gtk_events_pending()) {
-                        gtk_main_iteration();
+                    /* Process pending events to keep UI responsive (GTK4) */
+                    while (g_main_context_pending(NULL)) {
+                        g_main_context_iteration(NULL, FALSE);
                     }
                 }
             }

@@ -3,12 +3,12 @@ project('banshee', 'c',
   default_options: ['warning_level=2', 'c_std=gnu11'])
 
 # Dependencies
-gtk_dep = dependency('gtk+-3.0', version: '>=3.22')
+gtk_dep = dependency('gtk4', version: '>=4.6')
 gstreamer_dep = dependency('gstreamer-1.0', version: '>=1.14')
 gstreamer_video_dep = dependency('gstreamer-video-1.0', version: '>=1.14')
 gstreamer_pbutils_dep = dependency('gstreamer-pbutils-1.0', version: '>=1.14')
 gstreamer_tag_dep = dependency('gstreamer-tag-1.0', version: '>=1.14')
-glib_dep = dependency('glib-2.0', version: '>=2.56')
+glib_dep = dependency('glib-2.0', version: '>=2.70')
 sqlite_dep = dependency('sqlite3', version: '>=3.22')
 libxml_dep = dependency('libxml-2.0', version: '>=2.9')
 libcurl_dep = dependency('libcurl', version: '>=7.50')

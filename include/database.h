@@ -43,6 +43,7 @@ gboolean database_init_tables(Database *db);
 /* Track operations */
 gint database_add_track(Database *db, Track *track);
 Track* database_get_track(Database *db, gint track_id);
+void track_free(Track *track);
 GList* database_get_all_tracks(Database *db);
 gint database_get_audio_track_count(Database *db);
 GList* database_get_tracks_by_artist(Database *db, const gchar *artist);

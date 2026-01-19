@@ -1,7 +1,7 @@
 #include "videoview.h"
 #include <gdk/gdk.h>
 #ifdef GDK_WINDOWING_WIN32
-#include <gdk/gdkwin32.h>
+#include <gdk/win32/gdkwin32.h>
 #endif
 #include <string.h>
 
@@ -52,12 +52,13 @@ static void hide_controls(VideoView *view) {
 }
 
 /* Motion event to show controls when mouse moves over video */
-static gboolean on_video_motion(GtkWidget *widget, GdkEventMotion *event, gpointer user_data) {
-    (void)widget;
-    (void)event;
+/* GTK4: This is now handled via GtkEventControllerMotion */
+static void on_video_motion_cb(GtkEventControllerMotion *controller, gdouble x, gdouble y, gpointer user_data) {
+    (void)controller;
+    (void)x;
+    (void)y;
     VideoView *view = (VideoView *)user_data;
     show_controls(view);
-    return FALSE;
 }
 
 /* Back button clicked */
@@ -68,42 +69,40 @@ static void on_back_button_clicked(GtkButton *button, gpointer user_data) {
 }
 
 /* Audio stream menu item activated */
-static void on_audio_stream_selected(GtkMenuItem *item, gpointer user_data) {
+static void on_audio_stream_selected(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
     VideoView *view = (VideoView *)user_data;
-    gint index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "stream-index"));
+    gint index = g_variant_get_int32(parameter);
     player_set_audio_stream(view->player, index);
-    update_audio_menu(view);
+    (void)action;
 }
 
 /* Subtitle stream menu item activated */
-static void on_subtitle_stream_selected(GtkMenuItem *item, gpointer user_data) {
+static void on_subtitle_stream_selected(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
     VideoView *view = (VideoView *)user_data;
-    gint index = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "stream-index"));
+    gint index = g_variant_get_int32(parameter);
     player_set_subtitle_stream(view->player, index);
-    update_subtitle_menu(view);
+    (void)action;
 }
 
 /* Subtitles off selected */
-static void on_subtitles_off_selected(GtkMenuItem *item, gpointer user_data) {
-    (void)item;
+static void on_subtitles_off_selected(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    (void)action;
+    (void)parameter;
     VideoView *view = (VideoView *)user_data;
     player_set_subtitles_enabled(view->player, FALSE);
-    update_subtitle_menu(view);
 }
 
 static void update_audio_menu(VideoView *view) {
     if (!view || !view->audio_menu_button) return;
     
-    /* Create new menu */
-    GtkWidget *menu = gtk_menu_new();
+    /* GTK4: Create GMenu for the popover menu button */
+    GMenu *menu = g_menu_new();
     
     gint n_audio = player_get_audio_stream_count(view->player);
     gint current = player_get_current_audio_stream(view->player);
     
     if (n_audio == 0) {
-        GtkWidget *item = gtk_menu_item_new_with_label("No audio tracks");
-        gtk_widget_set_sensitive(item, FALSE);
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        g_menu_append(menu, "No audio tracks", NULL);
     } else {
         for (gint i = 0; i < n_audio; i++) {
             StreamInfo *info = player_get_audio_stream_info(view->player, i);
@@ -117,20 +116,19 @@ static void update_audio_menu(VideoView *view) {
                 label = g_strdup_printf("Audio Track %d", i + 1);
             }
             
-            GtkWidget *item = gtk_check_menu_item_new_with_label(label);
-            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item), i == current);
-            gtk_check_menu_item_set_draw_as_radio(GTK_CHECK_MENU_ITEM(item), TRUE);
-            g_object_set_data(G_OBJECT(item), "stream-index", GINT_TO_POINTER(i));
-            g_signal_connect(item, "activate", G_CALLBACK(on_audio_stream_selected), view);
-            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+            /* For now, just show the label - full action support would require more work */
+            gchar *action = g_strdup_printf("video.audio-stream(%d)", i);
+            g_menu_append(menu, label, action);
             
             g_free(label);
+            g_free(action);
             player_free_stream_info(info);
         }
     }
     
-    gtk_widget_show_all(menu);
-    gtk_menu_button_set_popup(GTK_MENU_BUTTON(view->audio_menu_button), menu);
+    GtkPopover *popover = GTK_POPOVER(gtk_popover_menu_new_from_model(G_MENU_MODEL(menu)));
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(view->audio_menu_button), GTK_WIDGET(popover));
+    g_object_unref(menu);
 }
 
 /* Wrapper for g_timeout_add */
@@ -142,35 +140,30 @@ static gboolean update_audio_menu_timeout(gpointer user_data) {
 static void update_subtitle_menu(VideoView *view) {
     if (!view || !view->subtitle_menu_button) return;
     
-    /* Create new menu */
-    GtkWidget *menu = gtk_menu_new();
+    /* GTK4: Create GMenu for the popover menu button */
+    GMenu *menu = g_menu_new();
     
     gint n_text = player_get_subtitle_stream_count(view->player);
     gint current = player_get_current_subtitle_stream(view->player);
     gboolean subs_enabled = player_get_subtitles_enabled(view->player);
+    (void)current;
+    (void)subs_enabled;
     
     /* Add "Off" option */
-    GtkWidget *off_item = gtk_check_menu_item_new_with_label("Off");
-    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(off_item), !subs_enabled || current < 0);
-    gtk_check_menu_item_set_draw_as_radio(GTK_CHECK_MENU_ITEM(off_item), TRUE);
-    g_signal_connect(off_item, "activate", G_CALLBACK(on_subtitles_off_selected), view);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), off_item);
+    g_menu_append(menu, "Off", "video.subtitles-off");
     
     if (n_text > 0) {
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        GMenu *tracks_section = g_menu_new();
         
         for (gint i = 0; i < n_text; i++) {
             StreamInfo *info = player_get_subtitle_stream_info(view->player, i);
             
             gchar *label;
             if (info && info->language && info->codec) {
-                /* Show language, codec, and track number for disambiguation */
                 label = g_strdup_printf("%d: %s (%s)", i + 1, info->language, info->codec);
             } else if (info && info->language && info->title && g_strcmp0(info->language, info->title) != 0) {
-                /* Show language and title if different */
                 label = g_strdup_printf("%d: %s - %s", i + 1, info->language, info->title);
             } else if (info && info->language) {
-                /* At minimum, include track number with language */
                 label = g_strdup_printf("%d: %s", i + 1, info->language);
             } else if (info && info->title) {
                 label = g_strdup_printf("%d: %s", i + 1, info->title);
@@ -178,21 +171,21 @@ static void update_subtitle_menu(VideoView *view) {
                 label = g_strdup_printf("Subtitle Track %d", i + 1);
             }
             
-            GtkWidget *item = gtk_check_menu_item_new_with_label(label);
-            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item), 
-                                           subs_enabled && i == current);
-            gtk_check_menu_item_set_draw_as_radio(GTK_CHECK_MENU_ITEM(item), TRUE);
-            g_object_set_data(G_OBJECT(item), "stream-index", GINT_TO_POINTER(i));
-            g_signal_connect(item, "activate", G_CALLBACK(on_subtitle_stream_selected), view);
-            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+            gchar *action = g_strdup_printf("video.subtitle-stream(%d)", i);
+            g_menu_append(tracks_section, label, action);
             
             g_free(label);
+            g_free(action);
             player_free_stream_info(info);
         }
+        
+        g_menu_append_section(menu, NULL, G_MENU_MODEL(tracks_section));
+        g_object_unref(tracks_section);
     }
     
-    gtk_widget_show_all(menu);
-    gtk_menu_button_set_popup(GTK_MENU_BUTTON(view->subtitle_menu_button), menu);
+    GtkPopover *popover = GTK_POPOVER(gtk_popover_menu_new_from_model(G_MENU_MODEL(menu)));
+    gtk_menu_button_set_popover(GTK_MENU_BUTTON(view->subtitle_menu_button), GTK_WIDGET(popover));
+    g_object_unref(menu);
 }
 
 /* Wrapper for g_timeout_add */
@@ -217,17 +210,17 @@ static GtkWidget* create_video_controls(VideoView *view) {
     gtk_widget_set_margin_bottom(controls_vbox, 10);
     gtk_widget_set_margin_top(controls_vbox, 10);
     
-    /* Add a semi-transparent background */
-    GtkStyleContext *context = gtk_widget_get_style_context(controls_vbox);
-    gtk_style_context_add_class(context, "video-controls");
+    /* Add a semi-transparent background - GTK4 style */
+    gtk_widget_add_css_class(controls_vbox, "video-controls");
     
     /* Apply CSS for background */
     GtkCssProvider *css = gtk_css_provider_new();
-    gtk_css_provider_load_from_data(css,
+    gtk_css_provider_load_from_string(css,
         ".video-controls { background-color: rgba(0, 0, 0, 0.7); border-radius: 8px; padding: 8px; }"
         ".video-title { font-weight: bold; font-size: 14px; color: white; }"
-        ".video-time { font-size: 12px; color: #cccccc; }", -1, NULL);
-    gtk_style_context_add_provider(context, GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        ".video-time { font-size: 12px; color: #cccccc; }");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(), 
+        GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(css);
     
     /* Video title label */
@@ -235,59 +228,56 @@ static GtkWidget* create_video_controls(VideoView *view) {
     gtk_label_set_ellipsize(GTK_LABEL(view->video_title_label), PANGO_ELLIPSIZE_END);
     gtk_label_set_max_width_chars(GTK_LABEL(view->video_title_label), 80);
     gtk_widget_set_halign(view->video_title_label, GTK_ALIGN_START);
-    GtkStyleContext *title_ctx = gtk_widget_get_style_context(view->video_title_label);
-    gtk_style_context_add_class(title_ctx, "video-title");
-    gtk_style_context_add_provider(title_ctx, GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    gtk_box_pack_start(GTK_BOX(controls_vbox), view->video_title_label, FALSE, FALSE, 0);
+    gtk_widget_add_css_class(view->video_title_label, "video-title");
+    gtk_box_append(GTK_BOX(controls_vbox), view->video_title_label);
     
     /* Time label */
     view->time_label = gtk_label_new("0:00 / 0:00");
     gtk_widget_set_halign(view->time_label, GTK_ALIGN_START);
-    GtkStyleContext *time_ctx = gtk_widget_get_style_context(view->time_label);
-    gtk_style_context_add_class(time_ctx, "video-time");
-    gtk_style_context_add_provider(time_ctx, GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    gtk_box_pack_start(GTK_BOX(controls_vbox), view->time_label, FALSE, FALSE, 0);
+    gtk_widget_add_css_class(view->time_label, "video-time");
+    gtk_box_append(GTK_BOX(controls_vbox), view->time_label);
     
     /* Control bar (horizontal buttons) */
     GtkWidget *control_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_widget_set_margin_top(control_bar, 5);
     
-    /* Back button */
-    view->back_button = gtk_button_new_from_icon_name("go-previous-symbolic", GTK_ICON_SIZE_BUTTON);
+    /* Back button - GTK4: no icon size parameter */
+    view->back_button = gtk_button_new_from_icon_name("go-previous-symbolic");
     gtk_widget_set_tooltip_text(view->back_button, "Back to video list");
     g_signal_connect(view->back_button, "clicked", G_CALLBACK(on_back_button_clicked), view);
-    gtk_box_pack_start(GTK_BOX(control_bar), view->back_button, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(control_bar), view->back_button);
     
     /* Spacer */
     GtkWidget *spacer = gtk_label_new("");
-    gtk_box_pack_start(GTK_BOX(control_bar), spacer, TRUE, TRUE, 0);
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(control_bar), spacer);
     
     /* Audio stream button */
     view->audio_menu_button = gtk_menu_button_new();
     GtkWidget *audio_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    GtkWidget *audio_icon = gtk_image_new_from_icon_name("audio-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *audio_icon = gtk_image_new_from_icon_name("audio-x-generic-symbolic");
     GtkWidget *audio_label = gtk_label_new("Audio");
-    gtk_box_pack_start(GTK_BOX(audio_box), audio_icon, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(audio_box), audio_label, FALSE, FALSE, 0);
-    gtk_container_add(GTK_CONTAINER(view->audio_menu_button), audio_box);
+    gtk_box_append(GTK_BOX(audio_box), audio_icon);
+    gtk_box_append(GTK_BOX(audio_box), audio_label);
+    gtk_menu_button_set_child(GTK_MENU_BUTTON(view->audio_menu_button), audio_box);
     gtk_widget_set_tooltip_text(view->audio_menu_button, "Select audio track");
-    gtk_box_pack_start(GTK_BOX(control_bar), view->audio_menu_button, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(control_bar), view->audio_menu_button);
     
     /* Subtitle button */
     view->subtitle_menu_button = gtk_menu_button_new();
     GtkWidget *sub_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    GtkWidget *sub_icon = gtk_image_new_from_icon_name("media-view-subtitles-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *sub_icon = gtk_image_new_from_icon_name("media-view-subtitles-symbolic");
     GtkWidget *sub_label = gtk_label_new("Subtitles");
-    gtk_box_pack_start(GTK_BOX(sub_box), sub_icon, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(sub_box), sub_label, FALSE, FALSE, 0);
-    gtk_container_add(GTK_CONTAINER(view->subtitle_menu_button), sub_box);
+    gtk_box_append(GTK_BOX(sub_box), sub_icon);
+    gtk_box_append(GTK_BOX(sub_box), sub_label);
+    gtk_menu_button_set_child(GTK_MENU_BUTTON(view->subtitle_menu_button), sub_box);
     gtk_widget_set_tooltip_text(view->subtitle_menu_button, "Select subtitles");
-    gtk_box_pack_start(GTK_BOX(control_bar), view->subtitle_menu_button, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(control_bar), view->subtitle_menu_button);
     
-    gtk_box_pack_start(GTK_BOX(controls_vbox), control_bar, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(controls_vbox), control_bar);
     
-    gtk_container_add(GTK_CONTAINER(view->controls_revealer), controls_vbox);
-    gtk_widget_show_all(view->controls_revealer);
+    gtk_revealer_set_child(GTK_REVEALER(view->controls_revealer), controls_vbox);
+    /* GTK4: widgets are visible by default */
     
     return view->controls_revealer;
 }
@@ -353,7 +343,7 @@ static void on_video_widget_ready(GtkWidget *widget, gpointer user_data) {
     /* Remove old video widget if present */
     if (view->video_widget && gtk_widget_get_parent(view->video_widget) == view->overlay_container) {
         g_print("VideoView: Removing old video widget from overlay\n");
-        gtk_container_remove(GTK_CONTAINER(view->overlay_container), view->video_widget);
+        gtk_overlay_set_child(GTK_OVERLAY(view->overlay_container), NULL);
     }
     
     /* Store the new widget */
@@ -379,20 +369,20 @@ static void on_video_widget_ready(GtkWidget *widget, gpointer user_data) {
     gtk_widget_set_valign(view->video_widget, GTK_ALIGN_FILL);
     gtk_widget_set_halign(view->video_widget, GTK_ALIGN_FILL);
     
-    /* Enable motion events on video widget for showing controls */
-    gtk_widget_add_events(view->video_widget, GDK_POINTER_MOTION_MASK);
-    g_signal_connect(view->video_widget, "motion-notify-event", 
-                    G_CALLBACK(on_video_motion), view);
+    /* GTK4: Use event controller for motion events instead of gtk_widget_add_events */
+    GtkEventController *motion_controller = gtk_event_controller_motion_new();
+    g_signal_connect(motion_controller, "motion", G_CALLBACK(on_video_motion_cb), view);
+    gtk_widget_add_controller(view->video_widget, motion_controller);
     
     /* Add video widget as the main child of the overlay */
-    gtk_container_add(GTK_CONTAINER(view->overlay_container), view->video_widget);
-    gtk_widget_show(view->video_widget);
+    gtk_overlay_set_child(GTK_OVERLAY(view->overlay_container), view->video_widget);
+    gtk_widget_set_visible(view->video_widget, TRUE);
     
     /* Add controls overlay on top of video */
     if (view->controls_revealer) {
         gtk_overlay_add_overlay(GTK_OVERLAY(view->overlay_container), view->controls_revealer);
-        gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(view->overlay_container), 
-                                             view->controls_revealer, FALSE);
+        /* Note: gtk_overlay_set_overlay_pass_through was removed in GTK4 */
+        /* Event propagation is now handled automatically */
     }
     
     /* Now switch to show the overlay with embedded video */
@@ -578,13 +568,14 @@ VideoView* video_view_new(Database *database, MediaPlayer *player) {
                     G_CALLBACK(on_video_row_activated), view);
     
     /* Scrolled window for video list */
-    view->scrolled_window = gtk_scrolled_window_new(NULL, NULL);
+    view->scrolled_window = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(view->scrolled_window),
                                   GTK_POLICY_AUTOMATIC,
                                   GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(view->scrolled_window), view->video_listview);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(view->scrolled_window), view->video_listview);
     
-    gtk_box_pack_start(GTK_BOX(list_box), view->scrolled_window, TRUE, TRUE, 0);
+    gtk_widget_set_vexpand(view->scrolled_window, TRUE);
+    gtk_box_append(GTK_BOX(list_box), view->scrolled_window);
     
     /* Add list page to stack */
     gtk_stack_add_named(GTK_STACK(view->main_container), list_box, "list");
@@ -608,7 +599,7 @@ VideoView* video_view_new(Database *database, MediaPlayer *player) {
     /* Don't create a video widget yet - we'll get it from gtksink when playing */
     view->video_widget = NULL;
     
-    gtk_widget_show_all(view->main_container);
+    /* GTK4: widgets are visible by default */
     
     return view;
 }

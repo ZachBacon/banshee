@@ -70,7 +70,7 @@ ChapterView* chapter_view_new(void) {
     gtk_widget_set_margin_start(label, 6);
     gtk_widget_set_margin_top(label, 6);
     gtk_widget_set_margin_bottom(label, 6);
-    gtk_box_pack_start(GTK_BOX(view->container), label, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(view->container), label);
     
     /* Create list store */
     view->store = gtk_list_store_new(CHAPTER_COL_COUNT,
@@ -104,14 +104,14 @@ ChapterView* chapter_view_new(void) {
                     G_CALLBACK(on_chapter_row_activated), view);
     
     /* Add to scrolled window */
-    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *scrolled = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(scrolled), view->listview);
-    gtk_box_pack_start(GTK_BOX(view->container), scrolled, TRUE, TRUE, 0);
-    
-    gtk_widget_show_all(view->container);
-    
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), view->listview);
+    gtk_widget_set_vexpand(scrolled, TRUE);
+    gtk_box_append(GTK_BOX(view->container), scrolled);
+
+    /* GTK4: widgets are visible by default */
     return view;
 }
 

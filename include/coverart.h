@@ -4,14 +4,19 @@
 #include <gtk/gtk.h>
 #include <glib.h>
 
+/* Forward declaration */
+typedef struct Database Database;
+
 #define COVER_ART_SIZE_SMALL 48
-#define COVER_ART_SIZE_MEDIUM 128
+#define COVER_ART_SIZE_ALBUM 64
+#define COVER_ART_SIZE_MEDIUM 200
 #define COVER_ART_SIZE_LARGE 300
 
 typedef struct {
     gchar *cache_dir;
     GHashTable *cache;
     GMutex cache_mutex;
+    GThreadPool *fetch_pool;  /* Thread pool for async fetches */
 } CoverArtManager;
 
 /* Cover art manager */
@@ -37,6 +42,9 @@ gboolean coverart_exists(CoverArtManager *manager, const gchar *artist, const gc
 typedef void (*CoverArtFetchCallback)(GdkPixbuf *pixbuf, gpointer user_data);
 void coverart_fetch_async(CoverArtManager *manager, const gchar *artist, const gchar *album, 
                           gint size, CoverArtFetchCallback callback, gpointer user_data);
+void coverart_fetch_async_with_db(CoverArtManager *manager, Database *database,
+                                  const gchar *artist, const gchar *album,
+                                  gint size, CoverArtFetchCallback callback, gpointer user_data);
 
 /* Podcast/URL-based cover art */
 GdkPixbuf* coverart_get_from_url(CoverArtManager *manager, const gchar *url, gint size);

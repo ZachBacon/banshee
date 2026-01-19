@@ -7,9 +7,11 @@
 #include "playlist.h"
 
 #define APP_NAME "Banshee Media Player"
+#define APP_ID "org.gnome.Banshee"
 #define VERSION "1.0.0"
 
 typedef struct {
+    GtkApplication *gtk_app;
     MediaPlayer *player;
     Database *database;
     MediaPlayerUI *ui;
@@ -98,8 +100,8 @@ static void cleanup_application(Application *app) {
     g_free(app);
 }
 
-static Application* init_application(void) {
-    Application *app = g_new0(Application, 1);
+static void on_activate(GtkApplication *gtk_app, gpointer user_data) {
+    Application *app = (Application *)user_data;
     
     /* Initialize GStreamer */
     gst_init(NULL, NULL);
@@ -108,8 +110,7 @@ static Application* init_application(void) {
     app->player = player_new();
     if (!app->player) {
         g_printerr("Failed to create media player\n");
-        g_free(app);
-        return NULL;
+        return;
     }
     
     /* Initialize database */
@@ -124,30 +125,27 @@ static Application* init_application(void) {
     if (!app->database) {
         g_printerr("Failed to open database\n");
         player_free(app->player);
-        g_free(app);
-        return NULL;
+        return;
     }
     
     if (!database_init_tables(app->database)) {
         g_printerr("Failed to initialize database tables\n");
         database_free(app->database);
         player_free(app->player);
-        g_free(app);
-        return NULL;
+        return;
     }
     
     /* Create playlist manager */
     app->playlist_manager = playlist_manager_new();
     
-    /* Create UI */
-    app->ui = ui_new(app->player, app->database);
+    /* Create UI - pass the GtkApplication so it can add the window */
+    app->ui = ui_new(app->player, app->database, gtk_app);
     if (!app->ui) {
         g_printerr("Failed to create UI\n");
         playlist_manager_free(app->playlist_manager);
         database_free(app->database);
         player_free(app->player);
-        g_free(app);
-        return NULL;
+        return;
     }
     
     /* Set up position callback for seek bar updates */
@@ -160,30 +158,28 @@ static Application* init_application(void) {
     /* Position updates now run in GStreamer's own thread - no GTK timer needed */
     app->video_playing = FALSE;  /* Initialize video flag */
     
-    return app;
+    g_print("%s v%s\n", APP_NAME, VERSION);
+}
+
+static void on_shutdown(GtkApplication *gtk_app, gpointer user_data) {
+    (void)gtk_app;
+    Application *app = (Application *)user_data;
+    cleanup_application(app);
+    g_app = NULL;
 }
 
 int main(int argc, char *argv[]) {
-    /* Initialize GTK */
-    gtk_init(&argc, &argv);
-    
-    /* Create and initialize application */
-    Application *app = init_application();
-    if (!app) {
-        return 1;
-    }
-    
+    Application *app = g_new0(Application, 1);
     g_app = app;  /* Set global pointer for video view access */
     
-    g_print("%s v%s\n", APP_NAME, VERSION);
+    app->gtk_app = gtk_application_new(APP_ID, G_APPLICATION_DEFAULT_FLAGS);
     
-    /* UI is shown in ui_new() - no need to call ui_show */
+    g_signal_connect(app->gtk_app, "activate", G_CALLBACK(on_activate), app);
+    g_signal_connect(app->gtk_app, "shutdown", G_CALLBACK(on_shutdown), app);
     
-    /* Run main loop */
-    gtk_main();
+    int status = g_application_run(G_APPLICATION(app->gtk_app), argc, argv);
     
-    /* Cleanup */
-    cleanup_application(app);
+    g_object_unref(app->gtk_app);
     
-    return 0;
+    return status;
 }

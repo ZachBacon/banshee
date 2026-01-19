@@ -11,7 +11,7 @@ static void on_search_clicked(GtkWidget *button, gpointer user_data) {
     TranscriptView *view = (TranscriptView *)user_data;
     (void)button;
     
-    const gchar *search_text = gtk_entry_get_text(GTK_ENTRY(view->search_entry));
+    const gchar *search_text = gtk_editable_get_text(GTK_EDITABLE(view->search_entry));
     if (!search_text || strlen(search_text) == 0) return;
     
     GtkTextIter start, match_start, match_end;
@@ -75,20 +75,21 @@ TranscriptView* transcript_view_new(void) {
     pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
     gtk_label_set_attributes(GTK_LABEL(label), attrs);
     pango_attr_list_unref(attrs);
-    gtk_box_pack_start(GTK_BOX(view->container), label, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(view->container), label);
     
     /* Search box */
     GtkWidget *search_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     view->search_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(view->search_entry), "Search transcript...");
     g_signal_connect(view->search_entry, "activate", G_CALLBACK(on_search_entry_activate), view);
-    gtk_box_pack_start(GTK_BOX(search_box), view->search_entry, TRUE, TRUE, 0);
+    gtk_widget_set_hexpand(view->search_entry, TRUE);
+    gtk_box_append(GTK_BOX(search_box), view->search_entry);
     
     view->search_button = gtk_button_new_with_label("Search");
     g_signal_connect(view->search_button, "clicked", G_CALLBACK(on_search_clicked), view);
-    gtk_box_pack_start(GTK_BOX(search_box), view->search_button, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(search_box), view->search_button);
     
-    gtk_box_pack_start(GTK_BOX(view->container), search_box, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(view->container), search_box);
     
     /* Text view for transcript */
     view->textview = gtk_text_view_new();
@@ -99,17 +100,18 @@ TranscriptView* transcript_view_new(void) {
     view->buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(view->textview));
     
     /* Scrolled window for text view */
-    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *scrolled = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(scrolled), view->textview);
-    gtk_box_pack_start(GTK_BOX(view->container), scrolled, TRUE, TRUE, 0);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), view->textview);
+    gtk_widget_set_vexpand(scrolled, TRUE);
+    gtk_box_append(GTK_BOX(view->container), scrolled);
     
     view->segments = NULL;
     view->full_text = NULL;
     view->search_mark = NULL;
     
-    gtk_widget_show_all(view->container);
+    /* GTK4: widgets are visible by default */
     
     return view;
 }

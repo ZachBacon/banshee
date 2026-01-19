@@ -15,6 +15,7 @@
 #include "videoview.h"
 
 typedef struct {
+    GtkApplication *app;
     GtkWidget *window;
     GtkWidget *main_box;
     
@@ -55,7 +56,7 @@ typedef struct {
     /* Main content area */
     GtkWidget *content_area;
     GtkWidget *track_listview;
-    GtkListStore *track_store;
+    GListStore *track_store;
     
     /* Cover art */
     CoverArtManager *coverart_manager;
@@ -93,7 +94,7 @@ typedef struct {
 } MediaPlayerUI;
 
 /* UI initialization */
-MediaPlayerUI* ui_new(MediaPlayer *player, Database *database);
+MediaPlayerUI* ui_new(MediaPlayer *player, Database *database, GtkApplication *app);
 void ui_free(MediaPlayerUI *ui);
 void ui_show(MediaPlayerUI *ui);
 

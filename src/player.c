@@ -1,8 +1,9 @@
 #include "player.h"
 #include <gst/gst.h>
+#include <gtk/gtk.h>
 #include <string.h>
 
-/* Callback data for gtksink widget notification */
+/* Callback data for GTK4 video sink (paintable) notification */
 typedef struct {
     MediaPlayer *player;
     GCallback widget_ready_callback;
@@ -30,17 +31,22 @@ static gboolean is_current_file_video(MediaPlayer *player) {
     return is_video;
 }
 
-static void on_gtksink_widget_ready(GObject *sink, GParamSpec *pspec, gpointer user_data) {
+static void on_gtk4_paintable_ready(GObject *sink, GParamSpec *pspec, gpointer user_data) {
     (void)pspec;
     GtkSinkCallbackData *data = (GtkSinkCallbackData *)user_data;
     
-    GtkWidget *widget = NULL;
-    g_object_get(sink, "widget", &widget, NULL);
+    GdkPaintable *paintable = NULL;
+    g_object_get(sink, "paintable", &paintable, NULL);
     
-    if (widget && data->widget_ready_callback) {
-        g_print("Player: gtksink widget is ready\n");
-        /* Call the user's callback */
-        ((void (*)(GtkWidget *, gpointer))data->widget_ready_callback)(widget, data->user_data);
+    if (paintable && data->widget_ready_callback) {
+        g_print("Player: gtk4paintablesink paintable is ready\n");
+        /* Create a GtkPicture widget to display the paintable */
+        GtkWidget *picture = gtk_picture_new_for_paintable(paintable);
+        gtk_widget_set_hexpand(picture, TRUE);
+        gtk_widget_set_vexpand(picture, TRUE);
+        /* Call the user's callback with the picture widget */
+        ((void (*)(GtkWidget *, gpointer))data->widget_ready_callback)(picture, data->user_data);
+        g_object_unref(paintable);
     }
 }
 
@@ -359,18 +365,14 @@ MediaPlayer* player_new(void) {
     g_object_set(player->playbin, "volume", 1.0, NULL);
     g_object_set(player->playbin, "mute", FALSE, NULL);
     
-    /* Create gtksink for embedded video playback in GTK widget */
-    player->video_sink = gst_element_factory_make("gtksink", "videosink");
-    if (!player->video_sink) {
-        /* Try gtkglsink as fallback for hardware acceleration */
-        player->video_sink = gst_element_factory_make("gtkglsink", "videosink");
-    }
+    /* Create GTK4 video sink for embedded video playback */
+    player->video_sink = gst_element_factory_make("gtk4paintablesink", "videosink");
     if (player->video_sink) {
-        /* Set gtksink as the video sink for playbin - this embeds video in GTK */
+        /* Set gtk4paintablesink as the video sink for playbin */
         g_object_set(player->playbin, "video-sink", player->video_sink, NULL);
-        g_print("Player: Using gtksink for embedded video playback\n");
+        g_print("Player: Using gtk4paintablesink for embedded video playback\n");
     } else {
-        g_print("Player: gtksink not available, video will use default sink\n");
+        g_print("Player: gtk4paintablesink not available, video will use default sink\n");
     }
     
     /* Create and set an explicit audio sink to ensure audio works with video */
@@ -711,42 +713,53 @@ gboolean player_has_video(MediaPlayer *player) {
 GtkWidget* player_get_video_widget(MediaPlayer *player) {
     if (!player || !player->video_sink) return NULL;
     
-    /* Get the widget from our stored gtksink reference */
-    GtkWidget *widget = NULL;
-    g_object_get(player->video_sink, "widget", &widget, NULL);
+    /* For GTK4, get the paintable and create a GtkPicture widget */
+    GdkPaintable *paintable = NULL;
+    g_object_get(player->video_sink, "paintable", &paintable, NULL);
     
-    return widget;
+    if (paintable) {
+        GtkWidget *picture = gtk_picture_new_for_paintable(paintable);
+        gtk_widget_set_hexpand(picture, TRUE);
+        gtk_widget_set_vexpand(picture, TRUE);
+        g_object_unref(paintable);
+        return picture;
+    }
+    
+    return NULL;
 }
 
 void player_set_video_widget_ready_callback(MediaPlayer *player, GCallback callback, gpointer user_data) {
     if (!player || !player->video_sink) return;
     
-    /* Check if it's gtksink or gtkglsink */
+    /* Check if it's gtk4paintablesink */
     const gchar *factory_name = gst_plugin_feature_get_name(
         GST_PLUGIN_FEATURE(gst_element_get_factory(player->video_sink)));
     
-    if (g_strcmp0(factory_name, "gtksink") == 0 || 
-        g_strcmp0(factory_name, "gtkglsink") == 0) {
+    if (g_strcmp0(factory_name, "gtk4paintablesink") == 0) {
         
-        /* Check if widget is already available */
-        GtkWidget *widget = NULL;
-        g_object_get(player->video_sink, "widget", &widget, NULL);
+        /* Check if paintable is already available */
+        GdkPaintable *paintable = NULL;
+        g_object_get(player->video_sink, "paintable", &paintable, NULL);
         
-        if (widget) {
-            /* Widget already exists, call callback immediately */
-            g_print("Player: gtksink widget already available\n");
-            ((void (*)(GtkWidget *, gpointer))callback)(widget, user_data);
+        if (paintable) {
+            /* Paintable already exists, create widget and call callback immediately */
+            g_print("Player: gtk4paintablesink paintable already available\n");
+            GtkWidget *picture = gtk_picture_new_for_paintable(paintable);
+            gtk_widget_set_hexpand(picture, TRUE);
+            gtk_widget_set_vexpand(picture, TRUE);
+            ((void (*)(GtkWidget *, gpointer))callback)(picture, user_data);
+            g_object_unref(paintable);
         } else {
-            /* Widget not ready yet, connect to notify signal */
-            g_print("Player: Waiting for gtksink widget to be created...\n");
+            /* Paintable not ready yet, connect to notify signal */
+            g_print("Player: Waiting for gtk4paintablesink paintable to be created...\n");
             
             GtkSinkCallbackData *cb_data = g_new0(GtkSinkCallbackData, 1);
             cb_data->player = player;
             cb_data->widget_ready_callback = callback;
             cb_data->user_data = user_data;
             
-            g_signal_connect_data(player->video_sink, "notify::widget",
-                                G_CALLBACK(on_gtksink_widget_ready),
+            g_signal_connect_data(player->video_sink, "notify::paintable",
+                                G_CALLBACK(on_gtk4_paintable_ready),
                                 cb_data,
                                 (GClosureNotify)g_free,
                                 0);

@@ -13,6 +13,19 @@ static void on_cancel_button_clicked(GtkButton *button, gpointer user_data);
 static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer user_data);
 static void update_live_indicator(PodcastView *view, Podcast *podcast);
 
+/* GTK4 dialog helper */
+typedef struct {
+    gboolean done;
+    gint response;
+} DialogResponseData;
+
+static void on_dialog_response(GtkDialog *dialog, gint response_id, gpointer user_data) {
+    (void)dialog;
+    DialogResponseData *data = (DialogResponseData *)user_data;
+    data->response = response_id;
+    data->done = TRUE;
+}
+
 /* Helper function to update support button text based on current funding */
 static void update_support_button_text(PodcastView *view) {
     if (!view->support_button || !view->current_funding) return;
@@ -26,14 +39,14 @@ static void update_support_button_text(PodcastView *view) {
         if (strlen(funding->message) > 20) {
             gchar *truncated = g_strndup(funding->message, 17);
             gchar *button_label = g_strdup_printf("%s...", truncated);
-            gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), button_label);
+            gtk_button_set_label(GTK_BUTTON(view->support_button), button_label);
             g_free(truncated);
             g_free(button_label);
         } else {
-            gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), funding->message);
+            gtk_button_set_label(GTK_BUTTON(view->support_button), funding->message);
         }
     } else {
-        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), button_text);
+        gtk_button_set_label(GTK_BUTTON(view->support_button), button_text);
     }
 }
 
@@ -46,10 +59,10 @@ static void update_value_button_text(PodcastView *view) {
         gchar *button_text = g_strdup_printf("⚡ %s (%d recipients)", 
                                            value->type ? value->type : "Lightning",
                                            g_list_length(value->recipients));
-        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->value_button), button_text);
+        gtk_button_set_label(GTK_BUTTON(view->value_button), button_text);
         g_free(button_text);
     } else {
-        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->value_button), "⚡ Value");
+        gtk_button_set_label(GTK_BUTTON(view->value_button), "⚡ Value");
     }
 }
 
@@ -98,7 +111,7 @@ static void update_live_indicator(PodcastView *view, Podcast *podcast) {
         
         gtk_widget_set_visible(view->live_indicator, TRUE);
         gtk_widget_set_visible(view->live_button, TRUE);
-        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->live_button), "Watch/Listen Live");
+        gtk_button_set_label(GTK_BUTTON(view->live_button), "Watch/Listen Live");
     } else if (view->current_live_items) {
         /* Has pending live items, show upcoming */
         PodcastLiveItem *next_live = NULL;
@@ -199,7 +212,7 @@ static void on_podcast_selection_changed(GtkTreeSelection *selection, gpointer u
                 view->current_funding = NULL;
             }
             gtk_widget_set_sensitive(view->support_button, FALSE);
-            gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), "Support");
+            gtk_button_set_label(GTK_BUTTON(view->support_button), "Support");
         }
         
         /* Load podcast value information and enable/disable value button */
@@ -218,7 +231,7 @@ static void on_podcast_selection_changed(GtkTreeSelection *selection, gpointer u
                 view->current_value = NULL;
             }
             gtk_widget_set_sensitive(view->value_button, FALSE);
-            gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->value_button), "⚡ Value");
+            gtk_button_set_label(GTK_BUTTON(view->value_button), "⚡ Value");
         }
         
         if (podcast) {
@@ -300,13 +313,13 @@ static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer u
         
         /* Clear funding popover to force recreation with new funding data */
         if (view->funding_popover) {
-            gtk_widget_destroy(view->funding_popover);
+            gtk_widget_unparent(view->funding_popover);
             view->funding_popover = NULL;
         }
         
         /* Clear value popover to force recreation with new value data */
         if (view->value_popover) {
-            gtk_widget_destroy(view->value_popover);
+            gtk_widget_unparent(view->value_popover);
             view->value_popover = NULL;
         }
     } else {
@@ -326,7 +339,7 @@ static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer u
                     view->current_funding = NULL;
                 }
                 gtk_widget_set_sensitive(view->support_button, FALSE);
-                gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), "Support");
+                gtk_button_set_label(GTK_BUTTON(view->support_button), "Support");
             }
             
             /* Handle podcast-level value info */
@@ -343,7 +356,7 @@ static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer u
                     view->current_value = NULL;
                 }
                 gtk_widget_set_sensitive(view->value_button, FALSE);
-                gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->value_button), "⚡ Value");
+                gtk_button_set_label(GTK_BUTTON(view->value_button), "⚡ Value");
             }
             
             if (podcast) {
@@ -661,14 +674,14 @@ static void on_chapters_button_clicked(GtkButton *button, gpointer user_data) {
         view->chapter_view = chapter_view_new();
         chapter_view_set_seek_callback(view->chapter_view, on_chapter_seek, view);
         
-        view->chapter_popover = gtk_popover_new(view->chapters_button);
-        gtk_container_add(GTK_CONTAINER(view->chapter_popover), chapter_view_get_widget(view->chapter_view));
+        view->chapter_popover = gtk_popover_new();
+        gtk_widget_set_parent(view->chapter_popover, view->chapters_button);
+        gtk_popover_set_child(GTK_POPOVER(view->chapter_popover), chapter_view_get_widget(view->chapter_view));
         gtk_widget_set_size_request(chapter_view_get_widget(view->chapter_view), 300, 400);
     }
     
     /* Update chapters and show popover */
     chapter_view_set_chapters(view->chapter_view, view->current_chapters);
-    gtk_widget_show_all(view->chapter_popover);
     gtk_popover_popup(GTK_POPOVER(view->chapter_popover));
 }
 
@@ -684,8 +697,9 @@ static void on_transcript_button_clicked(GtkButton *button, gpointer user_data) 
     if (!view->transcript_popover) {
         TranscriptView *transcript_view = transcript_view_new();
         
-        view->transcript_popover = gtk_popover_new(view->transcript_button);
-        gtk_container_add(GTK_CONTAINER(view->transcript_popover), transcript_view_get_widget(transcript_view));
+        view->transcript_popover = gtk_popover_new();
+        gtk_widget_set_parent(view->transcript_popover, view->transcript_button);
+        gtk_popover_set_child(GTK_POPOVER(view->transcript_popover), transcript_view_get_widget(transcript_view));
         gtk_widget_set_size_request(transcript_view_get_widget(transcript_view), 500, 600);
         
         /* Store transcript view in popover data for later access */
@@ -696,7 +710,6 @@ static void on_transcript_button_clicked(GtkButton *button, gpointer user_data) 
     TranscriptView *transcript_view = (TranscriptView *)g_object_get_data(G_OBJECT(view->transcript_popover), "transcript_view");
     transcript_view_load_from_url(transcript_view, view->current_transcript_url, view->current_transcript_type);
     
-    gtk_widget_show_all(view->transcript_popover);
     gtk_popover_popup(GTK_POPOVER(view->transcript_popover));
 }
 
@@ -732,14 +745,14 @@ static void on_support_button_clicked(GtkButton *button, gpointer user_data) {
         pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
         gtk_label_set_attributes(GTK_LABEL(title_label), attrs);
         pango_attr_list_unref(attrs);
-        gtk_box_pack_start(GTK_BOX(funding_box), title_label, FALSE, FALSE, 0);
+        gtk_box_append(GTK_BOX(funding_box), title_label);
         
         /* Add funding links */
         for (GList *l = view->current_funding; l != NULL; l = l->next) {
             PodcastFunding *funding = (PodcastFunding *)l->data;
             
             GtkWidget *funding_button = gtk_button_new();
-            gtk_button_set_relief(GTK_BUTTON(funding_button), GTK_RELIEF_NONE);
+            gtk_button_set_has_frame(GTK_BUTTON(funding_button), FALSE);
             
             GtkWidget *funding_label_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
             
@@ -751,16 +764,17 @@ static void on_support_button_clicked(GtkButton *button, gpointer user_data) {
                 icon_name = "face-smile-symbolic";
             }
             
-            GtkWidget *icon = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_BUTTON);
-            gtk_box_pack_start(GTK_BOX(funding_label_box), icon, FALSE, FALSE, 0);
+            GtkWidget *icon = gtk_image_new_from_icon_name(icon_name);
+            gtk_box_append(GTK_BOX(funding_label_box), icon);
             
             GtkWidget *label = gtk_label_new(funding->message ? funding->message : funding->url);
             gtk_widget_set_halign(label, GTK_ALIGN_START);
             gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
             gtk_label_set_max_width_chars(GTK_LABEL(label), 40);
-            gtk_box_pack_start(GTK_BOX(funding_label_box), label, TRUE, TRUE, 0);
+            gtk_widget_set_hexpand(label, TRUE);
+            gtk_box_append(GTK_BOX(funding_label_box), label);
             
-            gtk_container_add(GTK_CONTAINER(funding_button), funding_label_box);
+            gtk_button_set_child(GTK_BUTTON(funding_button), funding_label_box);
             
             /* Store URL in button data */
             g_object_set_data_full(G_OBJECT(funding_button), "funding_url", 
@@ -768,15 +782,15 @@ static void on_support_button_clicked(GtkButton *button, gpointer user_data) {
             
             g_signal_connect(funding_button, "clicked", G_CALLBACK(on_funding_url_clicked), NULL);
             
-            gtk_box_pack_start(GTK_BOX(funding_box), funding_button, FALSE, FALSE, 0);
+            gtk_box_append(GTK_BOX(funding_box), funding_button);
         }
         
-        view->funding_popover = gtk_popover_new(view->support_button);
-        gtk_container_add(GTK_CONTAINER(view->funding_popover), funding_box);
+        view->funding_popover = gtk_popover_new();
+        gtk_widget_set_parent(view->funding_popover, view->support_button);
+        gtk_popover_set_child(GTK_POPOVER(view->funding_popover), funding_box);
         gtk_widget_set_size_request(funding_box, 350, -1);
     }
     
-    gtk_widget_show_all(view->funding_popover);
     gtk_popover_popup(GTK_POPOVER(view->funding_popover));
 }
 
@@ -802,7 +816,7 @@ static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
         pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
         gtk_label_set_attributes(GTK_LABEL(title_label), attrs);
         pango_attr_list_unref(attrs);
-        gtk_box_pack_start(GTK_BOX(value_box), title_label, FALSE, FALSE, 0);
+        gtk_box_append(GTK_BOX(value_box), title_label);
         
         for (GList *l = view->current_value; l != NULL; l = l->next) {
             PodcastValue *value = (PodcastValue *)l->data;
@@ -814,24 +828,30 @@ static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
             gchar *method_text = g_strdup_printf("<b>Method:</b> %s", value->method ? value->method : "Unknown");
             gtk_label_set_markup(GTK_LABEL(method_label), method_text);
             g_free(method_text);
-            gtk_box_pack_start(GTK_BOX(value_info), method_label, FALSE, FALSE, 0);
+            gtk_box_append(GTK_BOX(value_info), method_label);
             
             if (value->suggested) {
                 GtkWidget *suggested_label = gtk_label_new(NULL);
                 gchar *suggested_text = g_strdup_printf("<b>Suggested:</b> %s sats", value->suggested);
                 gtk_label_set_markup(GTK_LABEL(suggested_label), suggested_text);
                 g_free(suggested_text);
-                gtk_box_pack_end(GTK_BOX(value_info), suggested_label, FALSE, FALSE, 0);
+                gtk_widget_set_hexpand(suggested_label, TRUE);
+                gtk_widget_set_halign(suggested_label, GTK_ALIGN_END);
+                gtk_box_append(GTK_BOX(value_info), suggested_label);
             }
             
-            gtk_box_pack_start(GTK_BOX(value_box), value_info, FALSE, FALSE, 5);
+            gtk_widget_set_margin_top(value_info, 5);
+            gtk_widget_set_margin_bottom(value_info, 5);
+            gtk_box_append(GTK_BOX(value_box), value_info);
             
             /* Recipients */
             if (value->recipients) {
                 GtkWidget *recipients_label = gtk_label_new("<b>Recipients:</b>");
                 gtk_label_set_markup(GTK_LABEL(recipients_label), "<b>Recipients:</b>");
                 gtk_widget_set_halign(recipients_label, GTK_ALIGN_START);
-                gtk_box_pack_start(GTK_BOX(value_box), recipients_label, FALSE, FALSE, 5);
+                gtk_widget_set_margin_top(recipients_label, 5);
+                gtk_widget_set_margin_bottom(recipients_label, 5);
+                gtk_box_append(GTK_BOX(value_box), recipients_label);
                 
                 gint total_split = 0;
                 for (GList *r = value->recipients; r != NULL; r = r->next) {
@@ -850,16 +870,17 @@ static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
                     gtk_label_set_attributes(GTK_LABEL(name_label), name_attrs);
                     pango_attr_list_unref(name_attrs);
                     gtk_widget_set_halign(name_label, GTK_ALIGN_START);
-                    gtk_box_pack_start(GTK_BOX(name_box), name_label, FALSE, FALSE, 0);
+                    gtk_box_append(GTK_BOX(name_box), name_label);
                     
                     GtkWidget *split_label = gtk_label_new(NULL);
                     gchar *split_text = g_strdup_printf("%d%%", recipient->split);
                     gtk_label_set_markup(GTK_LABEL(split_label), split_text);
                     g_free(split_text);
                     gtk_widget_set_halign(split_label, GTK_ALIGN_END);
-                    gtk_box_pack_end(GTK_BOX(name_box), split_label, FALSE, FALSE, 0);
+                    gtk_widget_set_hexpand(split_label, TRUE);
+                    gtk_box_append(GTK_BOX(name_box), split_label);
                     
-                    gtk_box_pack_start(GTK_BOX(recipient_box), name_box, FALSE, FALSE, 0);
+                    gtk_box_append(GTK_BOX(recipient_box), name_box);
                     
                     /* Lightning address */
                     if (recipient->address) {
@@ -876,7 +897,7 @@ static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
                         gtk_label_set_attributes(GTK_LABEL(address_label), addr_attrs);
                         pango_attr_list_unref(addr_attrs);
                         
-                        gtk_box_pack_start(GTK_BOX(recipient_box), address_label, FALSE, FALSE, 0);
+                        gtk_box_append(GTK_BOX(recipient_box), address_label);
                     }
                     
                     /* Custom key/value if present */
@@ -888,10 +909,12 @@ static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
                         gtk_label_set_markup(GTK_LABEL(custom_label), custom_text);
                         g_free(custom_text);
                         gtk_widget_set_halign(custom_label, GTK_ALIGN_START);
-                        gtk_box_pack_start(GTK_BOX(recipient_box), custom_label, FALSE, FALSE, 0);
+                        gtk_box_append(GTK_BOX(recipient_box), custom_label);
                     }
                     
-                    gtk_box_pack_start(GTK_BOX(value_box), recipient_box, FALSE, FALSE, 2);
+                    gtk_widget_set_margin_top(recipient_box, 2);
+                    gtk_widget_set_margin_bottom(recipient_box, 2);
+                    gtk_box_append(GTK_BOX(value_box), recipient_box);
                 }
                 
                 /* Show total split validation */
@@ -902,7 +925,7 @@ static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
                     g_free(warning_text);
                     gtk_widget_set_halign(warning_label, GTK_ALIGN_START);
                     gtk_widget_set_margin_top(warning_label, 5);
-                    gtk_box_pack_start(GTK_BOX(value_box), warning_label, FALSE, FALSE, 0);
+                    gtk_box_append(GTK_BOX(value_box), warning_label);
                 }
             }
         }
@@ -912,14 +935,14 @@ static void on_value_button_clicked(GtkButton *button, gpointer user_data) {
         gtk_label_set_markup(GTK_LABEL(info_label), "<i>Use a Value 4 Value enabled podcast app\nto send Lightning Network micropayments</i>");
         gtk_widget_set_halign(info_label, GTK_ALIGN_CENTER);
         gtk_widget_set_margin_top(info_label, 10);
-        gtk_box_pack_start(GTK_BOX(value_box), info_label, FALSE, FALSE, 0);
+        gtk_box_append(GTK_BOX(value_box), info_label);
         
-        view->value_popover = gtk_popover_new(view->value_button);
-        gtk_container_add(GTK_CONTAINER(view->value_popover), value_box);
+        view->value_popover = gtk_popover_new();
+        gtk_widget_set_parent(view->value_popover, view->value_button);
+        gtk_popover_set_child(GTK_POPOVER(view->value_popover), value_box);
         gtk_widget_set_size_request(value_box, 450, -1);
     }
     
-    gtk_widget_show_all(view->value_popover);
     gtk_popover_popup(GTK_POPOVER(view->value_popover));
 }
 
@@ -960,16 +983,22 @@ static void on_live_button_clicked(GtkButton *button, gpointer user_data) {
         PodcastContentLink *link = (PodcastContentLink *)live_item->content_links->data;
         if (link && link->href) {
             /* Create a popover to show content link options */
-            GtkWidget *popover = gtk_popover_new(view->live_button);
+            GtkWidget *popover = gtk_popover_new();
+            gtk_widget_set_parent(popover, view->live_button);
             GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-            gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+            gtk_widget_set_margin_start(box, 10);
+            gtk_widget_set_margin_end(box, 10);
+            gtk_widget_set_margin_top(box, 10);
+            gtk_widget_set_margin_bottom(box, 10);
             
             GtkWidget *title = gtk_label_new("Open Live Stream:");
             PangoAttrList *attrs = pango_attr_list_new();
             pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
             gtk_label_set_attributes(GTK_LABEL(title), attrs);
             pango_attr_list_unref(attrs);
-            gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 5);
+            gtk_widget_set_margin_top(title, 5);
+            gtk_widget_set_margin_bottom(title, 5);
+            gtk_box_append(GTK_BOX(box), title);
             
             for (GList *cl = live_item->content_links; cl != NULL; cl = cl->next) {
                 PodcastContentLink *content_link = (PodcastContentLink *)cl->data;
@@ -977,12 +1006,11 @@ static void on_live_button_clicked(GtkButton *button, gpointer user_data) {
                     GtkWidget *link_button = gtk_link_button_new_with_label(
                         content_link->href, 
                         content_link->text ? content_link->text : "Open Stream");
-                    gtk_box_pack_start(GTK_BOX(box), link_button, FALSE, FALSE, 0);
+                    gtk_box_append(GTK_BOX(box), link_button);
                 }
             }
             
-            gtk_container_add(GTK_CONTAINER(popover), box);
-            gtk_widget_show_all(popover);
+            gtk_popover_set_child(GTK_POPOVER(popover), box);
             gtk_popover_popup(GTK_POPOVER(popover));
         }
     }
@@ -1019,114 +1047,130 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     /* Main container */
     view->container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     
-    /* Toolbar */
-    GtkWidget *toolbar = gtk_toolbar_new();
-    gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH_HORIZ);
-    gtk_toolbar_set_icon_size(GTK_TOOLBAR(toolbar), GTK_ICON_SIZE_SMALL_TOOLBAR);
+    /* Toolbar - using GtkBox with buttons in GTK4 */
+    GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(toolbar, "toolbar");
+    gtk_widget_set_margin_start(toolbar, 4);
+    gtk_widget_set_margin_end(toolbar, 4);
+    gtk_widget_set_margin_top(toolbar, 4);
+    gtk_widget_set_margin_bottom(toolbar, 4);
     
-    view->add_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Subscribe"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->add_button), "list-add");
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->add_button), -1);
+    view->add_button = gtk_button_new_from_icon_name("list-add");
+    gtk_button_set_label(GTK_BUTTON(view->add_button), "Subscribe");
+    gtk_box_append(GTK_BOX(toolbar), view->add_button);
     g_signal_connect(view->add_button, "clicked", G_CALLBACK(on_add_button_clicked), view);
     
-    view->remove_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Unsubscribe"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->remove_button), "list-remove");
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->remove_button), -1);
+    view->remove_button = gtk_button_new_from_icon_name("list-remove");
+    gtk_button_set_label(GTK_BUTTON(view->remove_button), "Unsubscribe");
+    gtk_box_append(GTK_BOX(toolbar), view->remove_button);
     
-    view->refresh_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Refresh"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->refresh_button), "view-refresh");
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->refresh_button), -1);
+    view->refresh_button = gtk_button_new_from_icon_name("view-refresh");
+    gtk_button_set_label(GTK_BUTTON(view->refresh_button), "Refresh");
+    gtk_box_append(GTK_BOX(toolbar), view->refresh_button);
     g_signal_connect(view->refresh_button, "clicked", G_CALLBACK(on_refresh_button_clicked), view);
     
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
+    /* Separator */
+    GtkWidget *separator1 = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_widget_set_margin_start(separator1, 4);
+    gtk_widget_set_margin_end(separator1, 4);
+    gtk_box_append(GTK_BOX(toolbar), separator1);
     
-    view->download_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Download"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->download_button), "document-save");
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->download_button), -1);
+    view->download_button = gtk_button_new_from_icon_name("document-save");
+    gtk_button_set_label(GTK_BUTTON(view->download_button), "Download");
+    gtk_box_append(GTK_BOX(toolbar), view->download_button);
     g_signal_connect(view->download_button, "clicked", G_CALLBACK(on_download_button_clicked), view);
     
-    view->cancel_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Cancel"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->cancel_button), "process-stop");
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->cancel_button), -1);
+    view->cancel_button = gtk_button_new_from_icon_name("process-stop");
+    gtk_button_set_label(GTK_BUTTON(view->cancel_button), "Cancel");
+    gtk_box_append(GTK_BOX(toolbar), view->cancel_button);
     g_signal_connect(view->cancel_button, "clicked", G_CALLBACK(on_cancel_button_clicked), view);
     gtk_widget_set_sensitive(view->cancel_button, FALSE);
     
-    /* Add separator before episode-specific buttons */
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
+    /* Separator before episode-specific buttons */
+    GtkWidget *separator2 = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_widget_set_margin_start(separator2, 4);
+    gtk_widget_set_margin_end(separator2, 4);
+    gtk_box_append(GTK_BOX(toolbar), separator2);
     
     /* Episode-specific buttons */
-    view->chapters_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Chapters"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->chapters_button), "view-list-symbolic");
+    view->chapters_button = gtk_button_new_from_icon_name("view-list-symbolic");
+    gtk_button_set_label(GTK_BUTTON(view->chapters_button), "Chapters");
     gtk_widget_set_sensitive(view->chapters_button, FALSE);  /* Disabled until chapters available */
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->chapters_button), -1);
+    gtk_box_append(GTK_BOX(toolbar), view->chapters_button);
     g_signal_connect(view->chapters_button, "clicked", G_CALLBACK(on_chapters_button_clicked), view);
     
-    view->transcript_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Transcript"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->transcript_button), "text-x-generic-symbolic");
+    view->transcript_button = gtk_button_new_from_icon_name("text-x-generic-symbolic");
+    gtk_button_set_label(GTK_BUTTON(view->transcript_button), "Transcript");
     gtk_widget_set_sensitive(view->transcript_button, FALSE);  /* Disabled until transcript available */
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->transcript_button), -1);
+    gtk_box_append(GTK_BOX(toolbar), view->transcript_button);
     g_signal_connect(view->transcript_button, "clicked", G_CALLBACK(on_transcript_button_clicked), view);
     
-    view->support_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Support"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->support_button), "emblem-favorite-symbolic");
+    view->support_button = gtk_button_new_from_icon_name("emblem-favorite-symbolic");
+    gtk_button_set_label(GTK_BUTTON(view->support_button), "Support");
     gtk_widget_set_sensitive(view->support_button, FALSE);  /* Disabled until funding available */
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->support_button), -1);
+    gtk_box_append(GTK_BOX(toolbar), view->support_button);
     g_signal_connect(view->support_button, "clicked", G_CALLBACK(on_support_button_clicked), view);
     
-    view->value_button = GTK_WIDGET(gtk_tool_button_new(NULL, "⚡ Value"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->value_button), "weather-storm-symbolic");
+    view->value_button = gtk_button_new_from_icon_name("weather-storm-symbolic");
+    gtk_button_set_label(GTK_BUTTON(view->value_button), "⚡ Value");
     gtk_widget_set_sensitive(view->value_button, FALSE);  /* Disabled until value tags available */
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->value_button), -1);
+    gtk_box_append(GTK_BOX(toolbar), view->value_button);
     g_signal_connect(view->value_button, "clicked", G_CALLBACK(on_value_button_clicked), view);
     
-    /* Add separator before live indicator */
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
+    /* Separator before live indicator */
+    GtkWidget *separator3 = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_widget_set_margin_start(separator3, 4);
+    gtk_widget_set_margin_end(separator3, 4);
+    gtk_box_append(GTK_BOX(toolbar), separator3);
     
     /* Live indicator - a label that shows when podcast is live */
-    GtkToolItem *live_indicator_item = gtk_tool_item_new();
     view->live_indicator = gtk_label_new("");
     /* Style the live indicator with red background and white text */
     GtkCssProvider *css_provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_data(css_provider,
+    gtk_css_provider_load_from_string(css_provider,
         "label.live-indicator { "
         "  background-color: #ff0000; "
         "  color: white; "
         "  padding: 2px 8px; "
         "  border-radius: 4px; "
         "  font-weight: bold; "
-        "}", -1, NULL);
-    GtkStyleContext *style_context = gtk_widget_get_style_context(view->live_indicator);
-    gtk_style_context_add_provider(style_context, GTK_STYLE_PROVIDER(css_provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    gtk_style_context_add_class(style_context, "live-indicator");
+        "}");
+    gtk_widget_add_css_class(view->live_indicator, "live-indicator");
+    gtk_style_context_add_provider_for_display(
+        gtk_widget_get_display(view->live_indicator),
+        GTK_STYLE_PROVIDER(css_provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(css_provider);
-    gtk_container_add(GTK_CONTAINER(live_indicator_item), view->live_indicator);
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), live_indicator_item, -1);
+    gtk_box_append(GTK_BOX(toolbar), view->live_indicator);
     gtk_widget_set_visible(view->live_indicator, FALSE);  /* Hidden by default */
     
     /* Live button - to watch/listen to live stream */
-    view->live_button = GTK_WIDGET(gtk_tool_button_new(NULL, "Watch/Listen Live"));
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(view->live_button), "media-playback-start-symbolic");
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), GTK_TOOL_ITEM(view->live_button), -1);
+    view->live_button = gtk_button_new_from_icon_name("media-playback-start-symbolic");
+    gtk_button_set_label(GTK_BUTTON(view->live_button), "Watch/Listen Live");
+    gtk_box_append(GTK_BOX(toolbar), view->live_button);
     g_signal_connect(view->live_button, "clicked", G_CALLBACK(on_live_button_clicked), view);
     gtk_widget_set_visible(view->live_button, FALSE);  /* Hidden by default */
     
     view->current_live_items = NULL;
     
-    gtk_box_pack_start(GTK_BOX(view->container), toolbar, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(view->container), toolbar);
     
     /* Progress bar for downloads */
     view->progress_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_set_border_width(GTK_CONTAINER(view->progress_box), 5);
+    gtk_widget_set_margin_start(view->progress_box, 5);
+    gtk_widget_set_margin_end(view->progress_box, 5);
+    gtk_widget_set_margin_top(view->progress_box, 5);
+    gtk_widget_set_margin_bottom(view->progress_box, 5);
     
     view->progress_label = gtk_label_new("");
     gtk_widget_set_halign(view->progress_label, GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(view->progress_box), view->progress_label, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(view->progress_box), view->progress_label);
     
     view->progress_bar = gtk_progress_bar_new();
     gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(view->progress_bar), TRUE);
-    gtk_box_pack_start(GTK_BOX(view->progress_box), view->progress_bar, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(view->progress_box), view->progress_bar);
     
-    gtk_box_pack_start(GTK_BOX(view->container), view->progress_box, FALSE, FALSE, 0);
+    gtk_box_append(GTK_BOX(view->container), view->progress_box);
     /* Initially hide the progress box */
     gtk_widget_set_visible(view->progress_box, FALSE);
     
@@ -1153,10 +1197,12 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
     g_signal_connect(selection, "changed", G_CALLBACK(on_podcast_selection_changed), view);
     
-    GtkWidget *podcast_scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *podcast_scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(podcast_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(podcast_scroll), view->podcast_listview);
-    gtk_paned_pack1(GTK_PANED(view->paned), podcast_scroll, FALSE, TRUE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(podcast_scroll), view->podcast_listview);
+    gtk_paned_set_start_child(GTK_PANED(view->paned), podcast_scroll);
+    gtk_paned_set_shrink_start_child(GTK_PANED(view->paned), TRUE);
+    gtk_paned_set_resize_start_child(GTK_PANED(view->paned), FALSE);
     
     /* Episode list */
     view->episode_store = gtk_list_store_new(EPISODE_COL_COUNT,
@@ -1201,12 +1247,15 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     GtkTreeSelection *episode_selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->episode_listview));
     g_signal_connect(episode_selection, "changed", G_CALLBACK(on_episode_selection_changed), view);
     
-    GtkWidget *episode_scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *episode_scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(episode_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(episode_scroll), view->episode_listview);
-    gtk_paned_pack2(GTK_PANED(view->paned), episode_scroll, TRUE, TRUE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(episode_scroll), view->episode_listview);
+    gtk_paned_set_end_child(GTK_PANED(view->paned), episode_scroll);
+    gtk_paned_set_shrink_end_child(GTK_PANED(view->paned), TRUE);
+    gtk_paned_set_resize_end_child(GTK_PANED(view->paned), TRUE);
     
-    gtk_box_pack_start(GTK_BOX(view->container), view->paned, TRUE, TRUE, 0);
+    gtk_widget_set_vexpand(view->paned, TRUE);
+    gtk_box_append(GTK_BOX(view->container), view->paned);
     
     return view;
 }
@@ -1271,7 +1320,10 @@ void podcast_view_add_subscription(PodcastView *view) {
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-    gtk_container_set_border_width(GTK_CONTAINER(grid), 12);
+    gtk_widget_set_margin_start(grid, 12);
+    gtk_widget_set_margin_end(grid, 12);
+    gtk_widget_set_margin_top(grid, 12);
+    gtk_widget_set_margin_bottom(grid, 12);
     
     GtkWidget *label = gtk_label_new("Feed URL:");
     gtk_widget_set_halign(label, GTK_ALIGN_END);
@@ -1279,65 +1331,54 @@ void podcast_view_add_subscription(PodcastView *view) {
     
     GtkWidget *entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "https://example.com/feed.xml");
-    gtk_entry_set_width_chars(GTK_ENTRY(entry), 50);
+    gtk_editable_set_width_chars(GTK_EDITABLE(entry), 50);
     gtk_grid_attach(GTK_GRID(grid), entry, 1, 0, 1, 1);
     
-    gtk_container_add(GTK_CONTAINER(content), grid);
-    gtk_widget_show_all(dialog);
+    gtk_box_append(GTK_BOX(content), grid);
     
-    gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+    /* Store data for async dialog handling in GTK4 */
+    DialogResponseData data = { FALSE, GTK_RESPONSE_NONE };
+    
+    g_signal_connect(dialog, "response", G_CALLBACK(on_dialog_response), &data);
+    
+    gtk_window_present(GTK_WINDOW(dialog));
+    
+    /* Block until dialog responds */
+    while (!data.done) {
+        g_main_context_iteration(NULL, TRUE);
+    }
+    
+    gint response = data.response;
     
     if (response == GTK_RESPONSE_ACCEPT) {
-        const gchar *feed_url = gtk_entry_get_text(GTK_ENTRY(entry));
+        const gchar *feed_url = gtk_editable_get_text(GTK_EDITABLE(entry));
         
         if (feed_url && strlen(feed_url) > 0) {
-            /* Show progress dialog */
-            GtkWidget *progress_dialog = gtk_message_dialog_new(
-                NULL,
-                GTK_DIALOG_MODAL,
-                GTK_MESSAGE_INFO,
-                GTK_BUTTONS_NONE,
-                "Subscribing to podcast..."
-            );
-            gtk_widget_show_all(progress_dialog);
-            
-            while (gtk_events_pending()) {
-                gtk_main_iteration();
-            }
+            /* Show progress dialog using GtkAlertDialog in GTK4 style */
+            GtkAlertDialog *progress_alert = gtk_alert_dialog_new("Subscribing to podcast...");
+            /* Note: In GTK4, we can't easily show a progress dialog without response buttons.
+               For now, we'll just do the subscription synchronously */
             
             /* Subscribe to podcast */
             gboolean success = podcast_manager_subscribe(view->podcast_manager, feed_url);
-            
-            gtk_widget_destroy(progress_dialog);
             
             if (success) {
                 /* Refresh podcast list */
                 podcast_view_refresh_podcasts(view);
                 
-                GtkWidget *msg = gtk_message_dialog_new(
-                    NULL,
-                    GTK_DIALOG_MODAL,
-                    GTK_MESSAGE_INFO,
-                    GTK_BUTTONS_OK,
-                    "Successfully subscribed to podcast!"
-                );
-                gtk_dialog_run(GTK_DIALOG(msg));
-                gtk_widget_destroy(msg);
+                GtkAlertDialog *msg = gtk_alert_dialog_new("Successfully subscribed to podcast!");
+                gtk_alert_dialog_show(msg, NULL);
+                g_object_unref(msg);
             } else {
-                GtkWidget *msg = gtk_message_dialog_new(
-                    NULL,
-                    GTK_DIALOG_MODAL,
-                    GTK_MESSAGE_ERROR,
-                    GTK_BUTTONS_OK,
-                    "Failed to subscribe to podcast. Please check the feed URL."
-                );
-                gtk_dialog_run(GTK_DIALOG(msg));
-                gtk_widget_destroy(msg);
+                GtkAlertDialog *msg = gtk_alert_dialog_new("Failed to subscribe to podcast. Please check the feed URL.");
+                gtk_alert_dialog_show(msg, NULL);
+                g_object_unref(msg);
             }
+            g_object_unref(progress_alert);
         }
     }
     
-    gtk_widget_destroy(dialog);
+    gtk_window_destroy(GTK_WINDOW(dialog));
 }
 
 void podcast_view_refresh_podcasts(PodcastView *view) {
@@ -1623,7 +1664,7 @@ void podcast_view_update_episode_features(PodcastView *view, GList *chapters, co
         update_support_button_text(view);
     } else {
         gtk_widget_set_sensitive(view->support_button, FALSE);
-        gtk_tool_button_set_label(GTK_TOOL_BUTTON(view->support_button), "Support");
+        gtk_button_set_label(GTK_BUTTON(view->support_button), "Support");
     }
 }
 

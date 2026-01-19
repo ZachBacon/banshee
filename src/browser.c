@@ -134,7 +134,7 @@ BrowserView* browser_view_new(BrowserModel *model) {
     BrowserView *view = g_new0(BrowserView, 1);
     view->model = model;
     
-    view->scrolled_window = gtk_scrolled_window_new(NULL, NULL);
+    view->scrolled_window = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(view->scrolled_window),
                                     GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_size_request(view->scrolled_window, 150, -1);
@@ -154,7 +154,7 @@ BrowserView* browser_view_new(BrowserModel *model) {
         "#", renderer, "text", COL_BROWSER_COUNT, NULL);
     gtk_tree_view_append_column(GTK_TREE_VIEW(view->tree_view), column);
     
-    gtk_container_add(GTK_CONTAINER(view->scrolled_window), view->tree_view);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(view->scrolled_window), view->tree_view);
     
     return view;
 }

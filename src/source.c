@@ -225,7 +225,7 @@ void source_manager_add_default_sources(SourceManager *manager) {
 GtkWidget* source_manager_create_sidebar(SourceManager *manager) {
     if (!manager) return NULL;
     
-    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *scrolled = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                   GTK_POLICY_AUTOMATIC,
                                   GTK_POLICY_AUTOMATIC);
@@ -245,7 +245,7 @@ GtkWidget* source_manager_create_sidebar(SourceManager *manager) {
     
     gtk_tree_view_append_column(GTK_TREE_VIEW(tree_view), column);
     
-    gtk_container_add(GTK_CONTAINER(scrolled), tree_view);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), tree_view);
     
     return scrolled;
 }

@@ -1,8 +1,12 @@
 #include "coverart.h"
+#include "database.h"
 #include <string.h>
 #include <gst/gst.h>
 #include <gst/pbutils/pbutils.h>
 #include <gst/tag/tag.h>
+
+/* Thread pool function wrapper */
+static void coverart_fetch_pool_func(gpointer data, gpointer user_data);
 
 CoverArtManager* coverart_manager_new(void) {
     CoverArtManager *manager = g_new0(CoverArtManager, 1);
@@ -13,11 +17,24 @@ CoverArtManager* coverart_manager_new(void) {
     manager->cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
     g_mutex_init(&manager->cache_mutex);
     
+    /* Create thread pool with max 4 concurrent threads */
+    GError *error = NULL;
+    manager->fetch_pool = g_thread_pool_new(coverart_fetch_pool_func, manager, 4, FALSE, &error);
+    if (error) {
+        g_warning("Failed to create cover art thread pool: %s", error->message);
+        g_error_free(error);
+    }
+    
     return manager;
 }
 
 void coverart_manager_free(CoverArtManager *manager) {
     if (!manager) return;
+    
+    /* Free thread pool - wait for pending tasks */
+    if (manager->fetch_pool) {
+        g_thread_pool_free(manager->fetch_pool, FALSE, TRUE);
+    }
     
     g_free(manager->cache_dir);
     g_hash_table_destroy(manager->cache);
@@ -55,7 +72,10 @@ gboolean coverart_exists(CoverArtManager *manager, const gchar *artist, const gc
 GdkPixbuf* coverart_get(CoverArtManager *manager, const gchar *artist, const gchar *album, gint size) {
     if (!manager) return NULL;
     
-    gchar *key = coverart_generate_cache_key(artist, album);
+    /* Include size in cache key so different sizes are cached separately */
+    gchar *base_key = coverart_generate_cache_key(artist, album);
+    gchar *key = g_strdup_printf("%s@%d", base_key, size);
+    g_free(base_key);
     
     g_mutex_lock(&manager->cache_mutex);
     GdkPixbuf *cached = g_hash_table_lookup(manager->cache, key);
@@ -300,6 +320,7 @@ gboolean coverart_save(CoverArtManager *manager, const gchar *artist, const gcha
 
 typedef struct {
     CoverArtManager *manager;
+    Database *database;
     gchar *artist;
     gchar *album;
     gint size;
@@ -325,12 +346,61 @@ static gboolean invoke_callback_in_main(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
-static gpointer coverart_fetch_thread(gpointer data) {
+/* Thread pool function for fetching cover art */
+static void coverart_fetch_pool_func(gpointer data, gpointer user_data) {
     FetchData *fetch = (FetchData *)data;
+    (void)user_data;  /* Manager passed via FetchData */
+    
+    g_debug("Fetching cover art for: %s - %s (size %d)", 
+            fetch->artist ? fetch->artist : "Unknown",
+            fetch->album ? fetch->album : "Unknown",
+            fetch->size);
     
     GdkPixbuf *pixbuf = coverart_get(fetch->manager, fetch->artist, fetch->album, fetch->size);
     
+    if (pixbuf) {
+        g_debug("Found cover art in cache for: %s - %s", 
+                fetch->artist ? fetch->artist : "Unknown",
+                fetch->album ? fetch->album : "Unknown");
+    }
+    
+    /* If not in cache, try to extract from audio file */
+    if (!pixbuf && fetch->database) {
+        g_debug("Trying to extract from audio file for: %s - %s", 
+                fetch->artist ? fetch->artist : "Unknown",
+                fetch->album ? fetch->album : "Unknown");
+        
+        GList *tracks = database_get_tracks_by_album(fetch->database, fetch->artist, fetch->album);
+        if (tracks) {
+            Track *track = (Track *)tracks->data;
+            if (track && track->file_path) {
+                g_debug("Found track: %s", track->file_path);
+                /* Try to extract and cache */
+                if (coverart_extract_and_cache(fetch->manager, track->file_path, 
+                                               fetch->artist, fetch->album)) {
+                    /* Now try to get it from cache */
+                    pixbuf = coverart_get(fetch->manager, fetch->artist, fetch->album, fetch->size);
+                    if (pixbuf) {
+                        g_debug("Successfully extracted cover art from: %s", track->file_path);
+                    }
+                } else {
+                    g_debug("Failed to extract cover art from: %s", track->file_path);
+                }
+            }
+            g_list_free_full(tracks, (GDestroyNotify)track_free);
+        } else {
+            g_debug("No tracks found for: %s - %s", 
+                    fetch->artist ? fetch->artist : "Unknown",
+                    fetch->album ? fetch->album : "Unknown");
+        }
+    } else if (!pixbuf) {
+        g_debug("No database available to look up tracks");
+    }
+    
     if (!pixbuf) {
+        g_debug("Creating default gray cover for: %s - %s", 
+                fetch->artist ? fetch->artist : "Unknown",
+                fetch->album ? fetch->album : "Unknown");
         pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, fetch->size, fetch->size);
         gdk_pixbuf_fill(pixbuf, 0x333333FF);
     }
@@ -348,23 +418,36 @@ static gpointer coverart_fetch_thread(gpointer data) {
     g_free(fetch->artist);
     g_free(fetch->album);
     g_free(fetch);
-    
-    return NULL;
 }
 
 void coverart_fetch_async(CoverArtManager *manager, const gchar *artist, const gchar *album,
                           gint size, CoverArtFetchCallback callback, gpointer user_data) {
-    if (!manager) return;
+    coverart_fetch_async_with_db(manager, NULL, artist, album, size, callback, user_data);
+}
+
+void coverart_fetch_async_with_db(CoverArtManager *manager, Database *database,
+                                  const gchar *artist, const gchar *album,
+                                  gint size, CoverArtFetchCallback callback, gpointer user_data) {
+    if (!manager || !manager->fetch_pool) return;
     
     FetchData *fetch = g_new0(FetchData, 1);
     fetch->manager = manager;
+    fetch->database = database;
     fetch->artist = g_strdup(artist);
     fetch->album = g_strdup(album);
     fetch->size = size;
     fetch->callback = callback;
     fetch->user_data = user_data;
     
-    g_thread_new("coverart-fetch", coverart_fetch_thread, fetch);
+    GError *error = NULL;
+    g_thread_pool_push(manager->fetch_pool, fetch, &error);
+    if (error) {
+        g_warning("Failed to push cover art fetch to pool: %s", error->message);
+        g_error_free(error);
+        g_free(fetch->artist);
+        g_free(fetch->album);
+        g_free(fetch);
+    }
 }
 
 /* URL-based cover art functions for podcasts */

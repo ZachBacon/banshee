@@ -1,44 +1,167 @@
 #include "albumview.h"
 #include <string.h>
 
+/* ========== AlbumItem GObject Implementation ========== */
+
+G_DEFINE_TYPE(AlbumItem, album_item, G_TYPE_OBJECT)
+
+static void album_item_finalize(GObject *object) {
+    AlbumItem *item = ALBUM_ITEM(object);
+    g_free(item->artist);
+    g_free(item->album);
+    g_clear_object(&item->cover);
+    G_OBJECT_CLASS(album_item_parent_class)->finalize(object);
+}
+
+static void album_item_class_init(AlbumItemClass *klass) {
+    GObjectClass *object_class = G_OBJECT_CLASS(klass);
+    object_class->finalize = album_item_finalize;
+}
+
+static void album_item_init(AlbumItem *item) {
+    item->artist = NULL;
+    item->album = NULL;
+    item->cover = NULL;
+    item->picture = NULL;
+}
+
+AlbumItem* album_item_new(const gchar *artist, const gchar *album) {
+    AlbumItem *item = g_object_new(ALBUM_TYPE_ITEM, NULL);
+    item->artist = g_strdup(artist);
+    item->album = g_strdup(album);
+    return item;
+}
+
+void album_item_set_cover(AlbumItem *item, GdkPixbuf *pixbuf) {
+    if (!item) return;
+    g_clear_object(&item->cover);
+    if (pixbuf) {
+        item->cover = GDK_PAINTABLE(gdk_texture_new_for_pixbuf(pixbuf));
+        g_debug("album_item_set_cover: Created texture for %s", item->album ? item->album : "Unknown");
+    }
+    
+    /* Directly update the picture widget if we have a reference to it */
+    if (item->picture && GTK_IS_PICTURE(item->picture)) {
+        g_debug("album_item_set_cover: Directly updating picture widget for %s", 
+                item->album ? item->album : "Unknown");
+        gtk_picture_set_paintable(GTK_PICTURE(item->picture), item->cover);
+    } else {
+        g_debug("album_item_set_cover: No picture widget reference for %s", 
+                item->album ? item->album : "Unknown");
+    }
+}
+
+/* ========== Cover Art Loading ========== */
+
 typedef struct {
-    GtkListStore *store;  /* Hold reference to store, not view */
-    GtkTreeRowReference *row_ref;  /* Use row reference instead of iter */
-    gchar *artist;
-    gchar *album;
+    AlbumItem *item;
 } AlbumLoadData;
 
 static void on_coverart_loaded(GdkPixbuf *pixbuf, gpointer user_data) {
     AlbumLoadData *data = (AlbumLoadData *)user_data;
     
-    if (!data) return;
+    if (data && data->item && pixbuf) {
+        g_debug("on_coverart_loaded: Cover art loaded for %s - %s", 
+                data->item->artist ? data->item->artist : "Unknown",
+                data->item->album ? data->item->album : "Unknown");
+        
+        /* Update the cover on the item - this will also update the picture widget
+         * directly if one is bound */
+        album_item_set_cover(data->item, pixbuf);
+    } else {
+        g_debug("on_coverart_loaded: No pixbuf or item for callback");
+    }
     
-    if (pixbuf && data->store && gtk_tree_row_reference_valid(data->row_ref)) {
-        GtkTreePath *path = gtk_tree_row_reference_get_path(data->row_ref);
-        if (path) {
-            GtkTreeIter iter;
-            if (gtk_tree_model_get_iter(GTK_TREE_MODEL(data->store), &iter, path)) {
-                gtk_list_store_set(data->store, &iter,
-                                  ALBUM_COL_PIXBUF, pixbuf,
-                                  -1);
-            }
-            gtk_tree_path_free(path);
+    if (data) {
+        if (data->item) {
+            g_object_unref(data->item);
         }
+        g_free(data);
     }
-    
-    /* Don't unref pixbuf here - caller owns it */
-    
-    /* Clean up data */
-    if (data->store) {
-        g_object_unref(data->store);
-    }
-    if (data->row_ref) {
-        gtk_tree_row_reference_free(data->row_ref);
-    }
-    g_free(data->artist);
-    g_free(data->album);
-    g_free(data);
 }
+
+/* ========== GtkGridView Factory Callbacks ========== */
+
+static void setup_album_item(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    
+    /* Create a box to hold the cover image and label */
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_start(box, 8);
+    gtk_widget_set_margin_end(box, 8);
+    gtk_widget_set_margin_top(box, 8);
+    gtk_widget_set_margin_bottom(box, 8);
+    
+    /* Cover art image - use GtkPicture for proper scaling */
+    GtkWidget *picture = gtk_picture_new();
+    gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_COVER);
+    gtk_widget_set_size_request(picture, COVER_ART_SIZE_MEDIUM, COVER_ART_SIZE_MEDIUM);
+    gtk_widget_set_name(picture, "album-cover");
+    gtk_box_append(GTK_BOX(box), picture);
+    
+    /* Album title label */
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 20);
+    gtk_label_set_wrap(GTK_LABEL(label), FALSE);
+    gtk_widget_set_name(label, "album-label");
+    gtk_box_append(GTK_BOX(box), label);
+    
+    gtk_list_item_set_child(list_item, box);
+}
+
+static void bind_album_item(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    
+    GtkWidget *box = gtk_list_item_get_child(list_item);
+    AlbumItem *item = gtk_list_item_get_item(list_item);
+    
+    if (!box || !item) return;
+    
+    /* Find the picture and label widgets */
+    GtkWidget *picture = gtk_widget_get_first_child(box);
+    GtkWidget *label = gtk_widget_get_next_sibling(picture);
+    
+    /* Store reference to picture widget for async cover art updates */
+    item->picture = picture;
+    g_debug("bind_album_item: Stored picture reference for %s", item->album ? item->album : "Unknown");
+    
+    /* Set the cover art */
+    if (item->cover) {
+        gtk_picture_set_paintable(GTK_PICTURE(picture), item->cover);
+        g_debug("bind_album_item: Set existing cover for %s", item->album ? item->album : "Unknown");
+    } else {
+        gtk_picture_set_paintable(GTK_PICTURE(picture), NULL);
+        g_debug("bind_album_item: No cover yet for %s", item->album ? item->album : "Unknown");
+    }
+    
+    /* Set the album name */
+    gtk_label_set_text(GTK_LABEL(label), item->album ? item->album : "Unknown Album");
+}
+
+static void unbind_album_item(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    
+    /* Clear the picture reference when item is unbound */
+    AlbumItem *item = gtk_list_item_get_item(list_item);
+    if (item) {
+        item->picture = NULL;
+        g_debug("unbind_album_item: Cleared picture reference for %s", item->album ? item->album : "Unknown");
+    }
+}
+
+static void teardown_album_item(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)list_item;
+    (void)user_data;
+    /* Nothing special to do on teardown */
+}
+
+/* ========== AlbumView Implementation ========== */
 
 AlbumView* album_view_new(CoverArtManager *coverart_manager, Database *database) {
     AlbumView *view = g_new0(AlbumView, 1);
@@ -46,27 +169,33 @@ AlbumView* album_view_new(CoverArtManager *coverart_manager, Database *database)
     view->database = database;
     view->current_artist = NULL;
     
-    /* Create list store for albums */
-    view->store = gtk_list_store_new(ALBUM_COL_COUNT,
-                                     GDK_TYPE_PIXBUF,  /* Album cover */
-                                     G_TYPE_STRING,     /* Artist */
-                                     G_TYPE_STRING);    /* Album name */
+    /* Create GListStore for album items */
+    view->store = g_list_store_new(ALBUM_TYPE_ITEM);
     
-    /* Create icon view */
-    view->icon_view = gtk_icon_view_new_with_model(GTK_TREE_MODEL(view->store));
-    gtk_icon_view_set_pixbuf_column(GTK_ICON_VIEW(view->icon_view), ALBUM_COL_PIXBUF);
-    gtk_icon_view_set_text_column(GTK_ICON_VIEW(view->icon_view), ALBUM_COL_ALBUM);
-    gtk_icon_view_set_item_width(GTK_ICON_VIEW(view->icon_view), 140);
-    gtk_icon_view_set_spacing(GTK_ICON_VIEW(view->icon_view), 6);
-    gtk_icon_view_set_item_padding(GTK_ICON_VIEW(view->icon_view), 6);
-    gtk_icon_view_set_selection_mode(GTK_ICON_VIEW(view->icon_view), GTK_SELECTION_SINGLE);
+    /* Create selection model */
+    view->selection = gtk_single_selection_new(G_LIST_MODEL(view->store));
+    gtk_single_selection_set_autoselect(view->selection, FALSE);
+    gtk_single_selection_set_can_unselect(view->selection, TRUE);
+    
+    /* Create factory for list items */
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(setup_album_item), view);
+    g_signal_connect(factory, "bind", G_CALLBACK(bind_album_item), view);
+    g_signal_connect(factory, "unbind", G_CALLBACK(unbind_album_item), view);
+    g_signal_connect(factory, "teardown", G_CALLBACK(teardown_album_item), view);
+    
+    /* Create GtkGridView */
+    view->grid_view = gtk_grid_view_new(GTK_SELECTION_MODEL(view->selection), factory);
+    gtk_grid_view_set_min_columns(GTK_GRID_VIEW(view->grid_view), 1);
+    gtk_grid_view_set_max_columns(GTK_GRID_VIEW(view->grid_view), 10);
+    gtk_grid_view_set_single_click_activate(GTK_GRID_VIEW(view->grid_view), TRUE);
     
     /* Scrolled window */
-    view->scrolled_window = gtk_scrolled_window_new(NULL, NULL);
+    view->scrolled_window = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(view->scrolled_window),
                                   GTK_POLICY_NEVER,
                                   GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(view->scrolled_window), view->icon_view);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(view->scrolled_window), view->grid_view);
     
     return view;
 }
@@ -85,7 +214,7 @@ GtkWidget* album_view_get_widget(AlbumView *view) {
 
 void album_view_clear(AlbumView *view) {
     if (!view || !view->store) return;
-    gtk_list_store_clear(view->store);
+    g_list_store_remove_all(view->store);
 }
 
 void album_view_set_artist(AlbumView *view, const gchar *artist) {
@@ -102,55 +231,37 @@ void album_view_set_artist(AlbumView *view, const gchar *artist) {
     GList *albums = database_get_albums_by_artist(view->database, artist);
     
     /* Create default cover pixbuf */
-    GdkPixbuf *default_cover = gdk_pixbuf_new_from_file_at_scale(
-        "/usr/share/icons/hicolor/128x128/mimetypes/audio-x-generic.png",
-        128, 128, TRUE, NULL);
-    
-    if (!default_cover) {
-        /* Fallback: create a simple colored square */
-        default_cover = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 128, 128);
-        gdk_pixbuf_fill(default_cover, 0x666666FF);
-    }
+    GdkPixbuf *default_cover = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 
+                                              COVER_ART_SIZE_MEDIUM, COVER_ART_SIZE_MEDIUM);
+    gdk_pixbuf_fill(default_cover, 0x666666FF);
     
     for (GList *l = albums; l != NULL; l = l->next) {
         typedef struct { gchar *artist; gchar *album; } AlbumInfo;
         AlbumInfo *info = (AlbumInfo *)l->data;
         
-        GtkTreeIter iter;
-        gtk_list_store_append(view->store, &iter);
-        gtk_list_store_set(view->store, &iter,
-                          ALBUM_COL_PIXBUF, default_cover,
-                          ALBUM_COL_ARTIST, info->artist,
-                          ALBUM_COL_ALBUM, info->album,
-                          -1);
+        /* Create album item and add to store */
+        AlbumItem *item = album_item_new(info->artist, info->album);
+        album_item_set_cover(item, default_cover);
+        g_list_store_append(view->store, item);
         
-        /* Load cover art asynchronously */
+        /* Load cover art asynchronously - pass database to extract from audio if needed */
         if (view->coverart_manager) {
             AlbumLoadData *data = g_new0(AlbumLoadData, 1);
-            data->store = view->store;
-            g_object_ref(data->store);  /* Take reference to keep store alive */
+            data->item = g_object_ref(item);
             
-            GtkTreePath *path = gtk_tree_model_get_path(GTK_TREE_MODEL(view->store), &iter);
-            data->row_ref = gtk_tree_row_reference_new(GTK_TREE_MODEL(view->store), path);
-            gtk_tree_path_free(path);
-            
-            data->artist = g_strdup(info->artist);
-            data->album = g_strdup(info->album);
-            
-            coverart_fetch_async(view->coverart_manager, info->artist, info->album,
+            coverart_fetch_async_with_db(view->coverart_manager, view->database,
+                               info->artist, info->album,
                                COVER_ART_SIZE_MEDIUM, on_coverart_loaded, data);
         }
         
+        g_object_unref(item);  /* Store holds reference */
         g_free(info->artist);
         g_free(info->album);
         g_free(info);
     }
     
     g_list_free(albums);
-    
-    if (default_cover) {
-        g_object_unref(default_cover);
-    }
+    g_object_unref(default_cover);
 }
 
 typedef struct {
@@ -159,42 +270,27 @@ typedef struct {
     AlbumView *view;
 } SelectionCallbackData;
 
-static void on_album_selection_changed(GtkIconView *icon_view, gpointer user_data) {
+static void on_album_activated(GtkGridView *grid_view, guint position, gpointer user_data) {
     SelectionCallbackData *data = (SelectionCallbackData *)user_data;
-    GList *selected = gtk_icon_view_get_selected_items(icon_view);
     
-    if (selected && data->callback) {
-        GtkTreePath *path = (GtkTreePath *)selected->data;
-        GtkTreeIter iter;
-        
-        if (gtk_tree_model_get_iter(GTK_TREE_MODEL(data->view->store), &iter, path)) {
-            gchar *artist = NULL;
-            gchar *album = NULL;
-            
-            gtk_tree_model_get(GTK_TREE_MODEL(data->view->store), &iter,
-                              ALBUM_COL_ARTIST, &artist,
-                              ALBUM_COL_ALBUM, &album,
-                              -1);
-            
-            data->callback(artist, album, data->user_data);
-            
-            g_free(artist);
-            g_free(album);
-        }
+    if (!data || !data->callback || !data->view) return;
+    
+    AlbumItem *item = g_list_model_get_item(G_LIST_MODEL(data->view->store), position);
+    if (item) {
+        data->callback(item->artist, item->album, data->user_data);
+        g_object_unref(item);
     }
-    
-    g_list_free_full(selected, (GDestroyNotify)gtk_tree_path_free);
 }
 
 void album_view_set_selection_callback(AlbumView *view, AlbumSelectedCallback callback, gpointer user_data) {
-    if (!view || !view->icon_view) return;
+    if (!view || !view->grid_view) return;
     
     SelectionCallbackData *data = g_new0(SelectionCallbackData, 1);
     data->callback = callback;
     data->user_data = user_data;
     data->view = view;
     
-    g_signal_connect_data(view->icon_view, "selection-changed",
-        G_CALLBACK(on_album_selection_changed),
+    g_signal_connect_data(view->grid_view, "activate",
+        G_CALLBACK(on_album_activated),
         data, (GClosureNotify)g_free, (GConnectFlags)0);
 }
