@@ -64,6 +64,14 @@ static void on_video_position_update(MediaPlayer *player, gint64 position, gint6
     }
 }
 
+static void on_track_eos(gpointer user_data) {
+    Application *app = (Application *)user_data;
+    if (app && app->ui) {
+        /* Auto-advance to next track when current track ends */
+        ui_on_next_clicked(NULL, app->ui);
+    }
+}
+
 static gboolean update_position(gpointer user_data) {
     Application *app = (Application *)user_data;
     
@@ -150,6 +158,12 @@ static void on_activate(GtkApplication *gtk_app, gpointer user_data) {
     
     /* Set up position callback for seek bar updates */
     player_set_position_callback(app->player, (PlayerPositionCallback)on_video_position_update, app);
+    
+    /* Set up EOS callback for auto-advancing to next track */
+    player_set_eos_callback(app->player, (PlayerEosCallback)on_track_eos, app);
+    
+    /* Scan watched directories for new media (once at startup) */
+    ui_scan_watched_directories(app->ui);
     
     /* Load tracks and update UI */
     GList *tracks = database_get_all_tracks(app->database);

@@ -21,6 +21,8 @@ typedef struct {
     gchar *file_path;
     gint play_count;
     gint64 date_added;
+    gint64 last_played;
+    gboolean is_favorite;
 } Track;
 
 typedef struct {
@@ -68,6 +70,13 @@ gboolean database_delete_playlist(Database *db, gint playlist_id);
 gboolean database_increment_play_count(Database *db, gint track_id);
 GList* database_get_most_played_tracks(Database *db, gint limit);
 GList* database_get_recent_tracks(Database *db, gint limit);
+GList* database_get_recently_played_tracks(Database *db, gint limit);
+
+/* Favorites */
+gboolean database_toggle_favorite(Database *db, gint track_id);
+gboolean database_set_favorite(Database *db, gint track_id, gboolean is_favorite);
+gboolean database_is_favorite(Database *db, gint track_id);
+GList* database_get_favorite_tracks(Database *db, gint limit);
 
 /* Podcast operations */
 gint database_add_podcast(Database *db, const gchar *title, const gchar *feed_url, const gchar *link,

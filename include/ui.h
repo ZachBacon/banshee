@@ -15,6 +15,13 @@
 #include "videoview.h"
 #include "models.h"
 
+/* Repeat mode enumeration */
+typedef enum {
+    REPEAT_MODE_OFF,
+    REPEAT_MODE_SINGLE,
+    REPEAT_MODE_PLAYLIST
+} RepeatMode;
+
 typedef struct {
     GtkApplication *app;
     GtkWidget *window;
@@ -91,6 +98,12 @@ typedef struct {
     GList *current_playlist;
     gint current_track_index;
     
+    /* Shuffle and repeat */
+    gboolean shuffle_enabled;
+    RepeatMode repeat_mode;
+    GtkWidget *shuffle_button;
+    GtkWidget *repeat_button;
+    
     /* Signal handlers */
     gulong track_selection_handler_id;
     gulong seek_handler_id;
@@ -118,5 +131,8 @@ void ui_on_track_selected(GtkSelectionModel *selection, guint position, guint n_
 
 /* Preferences dialog */
 void ui_show_preferences_dialog(MediaPlayerUI *ui);
+
+/* Scan watched directories for new media on startup */
+void ui_scan_watched_directories(MediaPlayerUI *ui);
 
 #endif /* UI_H */

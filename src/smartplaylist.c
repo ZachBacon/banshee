@@ -56,6 +56,7 @@ static const gchar* field_to_column(QueryFieldType field) {
         case QUERY_FIELD_DURATION: return "duration";
         case QUERY_FIELD_DATE_ADDED: return "date_added";
         case QUERY_FIELD_LAST_PLAYED: return "last_played";
+        case QUERY_FIELD_IS_FAVORITE: return "is_favorite";
         default: return "title";
     }
 }
@@ -78,7 +79,8 @@ static const gchar* op_to_sql(QueryOperator op) {
 gchar* smartplaylist_build_sql(SmartPlaylist *playlist) {
     if (!playlist) return NULL;
     
-    GString *sql = g_string_new("SELECT * FROM tracks WHERE ");
+    GString *sql = g_string_new("SELECT id, title, artist, album, genre, track_number, duration, "
+                                "file_path, play_count, date_added, last_played FROM tracks WHERE ");
     
     if (playlist->conditions == NULL) {
         g_string_append(sql, "1=1");
@@ -129,7 +131,7 @@ GList* smartplaylist_get_tracks(SmartPlaylist *playlist, Database *db) {
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) == SQLITE_OK) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            /* Directly read all columns from the result set */
+            /* Read columns matching the explicit SELECT statement */
             Track *track = g_new0(Track, 1);
             track->id = sqlite3_column_int(stmt, 0);
             track->title = g_strdup((const char*)sqlite3_column_text(stmt, 1));
@@ -137,13 +139,12 @@ GList* smartplaylist_get_tracks(SmartPlaylist *playlist, Database *db) {
             track->album = g_strdup((const char*)sqlite3_column_text(stmt, 3));
             track->genre = sqlite3_column_text(stmt, 4) ? 
                 g_strdup((const char*)sqlite3_column_text(stmt, 4)) : NULL;
-            /* Skip year at column 5 - not in Track struct */
+            track->track_number = sqlite3_column_int(stmt, 5);
             track->duration = sqlite3_column_int(stmt, 6);
             track->file_path = g_strdup((const char*)sqlite3_column_text(stmt, 7));
             track->play_count = sqlite3_column_int(stmt, 8);
-            /* Skip rating at column 9 - not in Track struct */
-            track->date_added = sqlite3_column_int64(stmt, 10);
-            /* Skip last_played at column 11 - not in Track struct */
+            track->date_added = sqlite3_column_int64(stmt, 9);
+            track->last_played = sqlite3_column_int64(stmt, 10);
             
             tracks = g_list_append(tracks, track);
         }
@@ -156,7 +157,7 @@ GList* smartplaylist_get_tracks(SmartPlaylist *playlist, Database *db) {
 
 SmartPlaylist* smartplaylist_create_favorites(void) {
     SmartPlaylist *playlist = smartplaylist_new("Favorites");
-    smartplaylist_add_condition(playlist, QUERY_FIELD_RATING, QUERY_OP_GREATER_OR_EQUAL, "4");
+    smartplaylist_add_condition(playlist, QUERY_FIELD_IS_FAVORITE, QUERY_OP_EQUALS, "1");
     playlist->limit = 100;
     return playlist;
 }

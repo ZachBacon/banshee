@@ -16,6 +16,7 @@ struct _BansheeTrackObject {
     gchar *duration_str;
     gint duration_seconds;
     gchar *file_path;
+    gint play_count;
 };
 
 enum {
@@ -28,6 +29,7 @@ enum {
     TRACK_PROP_DURATION_STR,
     TRACK_PROP_DURATION_SECONDS,
     TRACK_PROP_FILE_PATH,
+    TRACK_PROP_PLAY_COUNT,
     TRACK_N_PROPERTIES
 };
 
@@ -76,6 +78,9 @@ static void banshee_track_object_get_property(GObject *object, guint prop_id,
         case TRACK_PROP_FILE_PATH:
             g_value_set_string(value, self->file_path);
             break;
+        case TRACK_PROP_PLAY_COUNT:
+            g_value_set_int(value, self->play_count);
+            break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     }
@@ -114,6 +119,9 @@ static void banshee_track_object_set_property(GObject *object, guint prop_id,
         case TRACK_PROP_FILE_PATH:
             g_free(self->file_path);
             self->file_path = g_value_dup_string(value);
+            break;
+        case TRACK_PROP_PLAY_COUNT:
+            self->play_count = g_value_get_int(value);
             break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -167,6 +175,11 @@ static void banshee_track_object_class_init(BansheeTrackObjectClass *klass) {
                             NULL,
                             G_PARAM_READWRITE | G_PARAM_CONSTRUCT);
     
+    track_properties[TRACK_PROP_PLAY_COUNT] =
+        g_param_spec_int("play-count", "Play Count", "Number of times track has been played",
+                         0, G_MAXINT, 0,
+                         G_PARAM_READWRITE | G_PARAM_CONSTRUCT);
+    
     g_object_class_install_properties(object_class, TRACK_N_PROPERTIES, track_properties);
 }
 
@@ -179,12 +192,14 @@ static void banshee_track_object_init(BansheeTrackObject *self) {
     self->duration_str = NULL;
     self->duration_seconds = 0;
     self->file_path = NULL;
+    self->play_count = 0;
 }
 
 BansheeTrackObject* banshee_track_object_new(gint id, gint track_number,
                                               const gchar *title, const gchar *artist,
                                               const gchar *album, const gchar *duration_str,
-                                              gint duration_seconds, const gchar *file_path) {
+                                              gint duration_seconds, const gchar *file_path,
+                                              gint play_count) {
     return g_object_new(BANSHEE_TYPE_TRACK_OBJECT,
                         "id", id,
                         "track-number", track_number,
@@ -194,6 +209,7 @@ BansheeTrackObject* banshee_track_object_new(gint id, gint track_number,
                         "duration-str", duration_str,
                         "duration-seconds", duration_seconds,
                         "file-path", file_path,
+                        "play-count", play_count,
                         NULL);
 }
 
@@ -235,6 +251,11 @@ gint banshee_track_object_get_duration_seconds(BansheeTrackObject *self) {
 const gchar* banshee_track_object_get_file_path(BansheeTrackObject *self) {
     g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), NULL);
     return self->file_path;
+}
+
+gint banshee_track_object_get_play_count(BansheeTrackObject *self) {
+    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), 0);
+    return self->play_count;
 }
 
 /* ============================================================================

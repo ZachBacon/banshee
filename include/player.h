@@ -53,8 +53,10 @@ PlayerState player_get_state(MediaPlayer *player);
 /* Event handling */
 typedef void (*PlayerStateCallback)(MediaPlayer *player, PlayerState state, gpointer user_data);
 typedef void (*PlayerPositionCallback)(MediaPlayer *player, gint64 position, gint64 duration, gpointer user_data);
+typedef void (*PlayerEosCallback)(MediaPlayer *player, gpointer user_data);
 void player_set_state_callback(MediaPlayer *player, PlayerStateCallback callback, gpointer user_data);
 void player_set_position_callback(MediaPlayer *player, PlayerPositionCallback callback, gpointer user_data);
+void player_set_eos_callback(MediaPlayer *player, PlayerEosCallback callback, gpointer user_data);
 
 /* Video support */
 void player_set_video_window(MediaPlayer *player, guintptr window_handle);

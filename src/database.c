@@ -18,7 +18,8 @@ static const char *CREATE_TRACKS_TABLE =
     "play_count INTEGER DEFAULT 0,"
     "rating INTEGER DEFAULT 0,"
     "last_played INTEGER,"
-    "date_added INTEGER"
+    "date_added INTEGER,"
+    "is_favorite INTEGER DEFAULT 0"
     ");";
 
 static const char *CREATE_PLAYLISTS_TABLE = 
@@ -332,6 +333,13 @@ gboolean database_init_tables(Database *db) {
     
     /* Migration: Add track_number column to existing tracks table if it doesn't exist */
     rc = sqlite3_exec(db->db, "ALTER TABLE tracks ADD COLUMN track_number INTEGER DEFAULT 0;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        /* Column may already exist, that's fine */
+        sqlite3_free(err_msg);
+    }
+    
+    /* Migration: Add is_favorite column to existing tracks table if it doesn't exist */
+    rc = sqlite3_exec(db->db, "ALTER TABLE tracks ADD COLUMN is_favorite INTEGER DEFAULT 0;", NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
         /* Column may already exist, that's fine */
         sqlite3_free(err_msg);
@@ -946,7 +954,28 @@ gboolean database_delete_playlist(Database *db, gint playlist_id) {
 gboolean database_increment_play_count(Database *db, gint track_id) {
     if (!db || !db->db) return FALSE;
     
-    const char *sql = "UPDATE tracks SET play_count = play_count + 1 WHERE id=?;";
+    gint64 now = g_get_real_time() / 1000000;  /* Convert to seconds */
+    const char *sql = "UPDATE tracks SET play_count = play_count + 1, last_played = ? WHERE id=?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        return FALSE;
+    }
+    
+    sqlite3_bind_int64(stmt, 1, now);
+    sqlite3_bind_int(stmt, 2, track_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE);
+}
+
+gboolean database_toggle_favorite(Database *db, gint track_id) {
+    if (!db || !db->db) return FALSE;
+    
+    const char *sql = "UPDATE tracks SET is_favorite = NOT is_favorite WHERE id=?;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -960,6 +989,90 @@ gboolean database_increment_play_count(Database *db, gint track_id) {
     sqlite3_finalize(stmt);
     
     return (rc == SQLITE_DONE);
+}
+
+gboolean database_set_favorite(Database *db, gint track_id, gboolean is_favorite) {
+    if (!db || !db->db) return FALSE;
+    
+    const char *sql = "UPDATE tracks SET is_favorite = ? WHERE id=?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        return FALSE;
+    }
+    
+    sqlite3_bind_int(stmt, 1, is_favorite ? 1 : 0);
+    sqlite3_bind_int(stmt, 2, track_id);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE);
+}
+
+gboolean database_is_favorite(Database *db, gint track_id) {
+    if (!db || !db->db) return FALSE;
+    
+    const char *sql = "SELECT is_favorite FROM tracks WHERE id=?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        return FALSE;
+    }
+    
+    sqlite3_bind_int(stmt, 1, track_id);
+    
+    gboolean is_fav = FALSE;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        is_fav = sqlite3_column_int(stmt, 0) != 0;
+    }
+    
+    sqlite3_finalize(stmt);
+    return is_fav;
+}
+
+GList* database_get_favorite_tracks(Database *db, gint limit) {
+    if (!db || !db->db) return NULL;
+    
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added, last_played, is_favorite "
+                      "FROM tracks WHERE is_favorite = 1 AND ("
+                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+                      "LOWER(file_path) LIKE '%.mpc') ORDER BY title ASC LIMIT ?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        return NULL;
+    }
+    
+    sqlite3_bind_int(stmt, 1, limit);
+    
+    GList *tracks = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Track *track = g_new0(Track, 1);
+        track->id = sqlite3_column_int(stmt, 0);
+        track->title = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
+        track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
+        track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
+        track->last_played = sqlite3_column_int64(stmt, 10);
+        track->is_favorite = sqlite3_column_int(stmt, 11) != 0;
+        tracks = g_list_append(tracks, track);
+    }
+    
+    sqlite3_finalize(stmt);
+    return tracks;
 }
 
 GList* database_get_most_played_tracks(Database *db, gint limit) {
@@ -1033,6 +1146,46 @@ GList* database_get_recent_tracks(Database *db, gint limit) {
         track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
         track->play_count = sqlite3_column_int(stmt, 8);
         track->date_added = sqlite3_column_int64(stmt, 9);
+        tracks = g_list_append(tracks, track);
+    }
+    
+    sqlite3_finalize(stmt);
+    return tracks;
+}
+
+GList* database_get_recently_played_tracks(Database *db, gint limit) {
+    if (!db || !db->db) return NULL;
+    
+    const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added, last_played "
+                      "FROM tracks WHERE last_played IS NOT NULL AND last_played > 0 AND ("
+                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
+                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
+                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
+                      "LOWER(file_path) LIKE '%.mpc') ORDER BY last_played DESC LIMIT ?;";
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    
+    if (rc != SQLITE_OK) {
+        return NULL;
+    }
+    
+    sqlite3_bind_int(stmt, 1, limit);
+    
+    GList *tracks = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Track *track = g_new0(Track, 1);
+        track->id = sqlite3_column_int(stmt, 0);
+        track->title = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
+        track->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
+        track->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 3));
+        track->genre = g_strdup((const gchar *)sqlite3_column_text(stmt, 4));
+        track->track_number = sqlite3_column_int(stmt, 5);
+        track->duration = sqlite3_column_int(stmt, 6);
+        track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
+        track->play_count = sqlite3_column_int(stmt, 8);
+        track->date_added = sqlite3_column_int64(stmt, 9);
+        track->last_played = sqlite3_column_int64(stmt, 10);
         tracks = g_list_append(tracks, track);
     }
     

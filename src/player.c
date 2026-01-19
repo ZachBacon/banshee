@@ -60,7 +60,13 @@ typedef struct {
     gpointer user_data;
 } PositionCallbackData;
 
+typedef struct {
+    PlayerEosCallback callback;
+    gpointer user_data;
+} EosCallbackData;
+
 static PositionCallbackData *position_callback_data = NULL;
+static EosCallbackData *eos_callback_data = NULL;
 static guint position_timer_id = 0;
 
 /* Timer callback for position updates */
@@ -98,6 +104,10 @@ static gboolean bus_callback(GstBus *bus, GstMessage *msg, gpointer data) {
         }
         case GST_MESSAGE_EOS:
             player->state = PLAYER_STATE_STOPPED;
+            /* Notify UI to advance to next track */
+            if (eos_callback_data && eos_callback_data->callback) {
+                g_idle_add_once((GSourceOnceFunc)eos_callback_data->callback, eos_callback_data->user_data);
+            }
             break;
         case GST_MESSAGE_STATE_CHANGED: {
             if (GST_MESSAGE_SRC(msg) == GST_OBJECT(player->playbin)) {
@@ -667,6 +677,22 @@ void player_set_position_callback(MediaPlayer *player, PlayerPositionCallback ca
         position_callback_data->user_data = user_data;
     } else {
         position_callback_data = NULL;
+    }
+}
+
+void player_set_eos_callback(MediaPlayer *player, PlayerEosCallback callback, gpointer user_data) {
+    (void)player;  /* Unused */
+    
+    if (eos_callback_data) {
+        g_free(eos_callback_data);
+    }
+    
+    if (callback) {
+        eos_callback_data = g_new0(EosCallbackData, 1);
+        eos_callback_data->callback = callback;
+        eos_callback_data->user_data = user_data;
+    } else {
+        eos_callback_data = NULL;
     }
 }
 

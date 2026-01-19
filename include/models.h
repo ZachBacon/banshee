@@ -16,7 +16,8 @@ G_DECLARE_FINAL_TYPE(BansheeTrackObject, banshee_track_object, BANSHEE, TRACK_OB
 BansheeTrackObject* banshee_track_object_new(gint id, gint track_number, 
                                               const gchar *title, const gchar *artist,
                                               const gchar *album, const gchar *duration_str,
-                                              gint duration_seconds, const gchar *file_path);
+                                              gint duration_seconds, const gchar *file_path,
+                                              gint play_count);
 
 /* Property accessors */
 gint banshee_track_object_get_id(BansheeTrackObject *self);
@@ -27,6 +28,7 @@ const gchar* banshee_track_object_get_album(BansheeTrackObject *self);
 const gchar* banshee_track_object_get_duration_str(BansheeTrackObject *self);
 gint banshee_track_object_get_duration_seconds(BansheeTrackObject *self);
 const gchar* banshee_track_object_get_file_path(BansheeTrackObject *self);
+gint banshee_track_object_get_play_count(BansheeTrackObject *self);
 
 /* ============================================================================
  * BansheeBrowserItem - GObject wrapper for browser list items
