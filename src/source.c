@@ -36,11 +36,26 @@ void source_add_child(Source *parent, Source *child) {
     parent->children = g_list_append(parent->children, child);
 }
 
+/* Callback for GtkTreeListModel to get children of an item */
+static GListModel* get_source_children(gpointer item, gpointer user_data) {
+    (void)user_data;
+    BansheeSourceObject *source_obj = BANSHEE_SOURCE_OBJECT(item);
+    GListModel *children = banshee_source_object_get_children(source_obj);
+    
+    if (g_list_model_get_n_items(children) == 0) {
+        return NULL;  /* No children */
+    }
+    
+    return g_object_ref(children);
+}
+
 SourceManager* source_manager_new(Database *db) {
     SourceManager *manager = g_new0(SourceManager, 1);
     manager->db = db;
     manager->sources = NULL;
-    manager->tree_store = gtk_tree_store_new(4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT, G_TYPE_POINTER);
+    manager->source_store = g_list_store_new(BANSHEE_TYPE_SOURCE_OBJECT);
+    manager->tree_list_model = NULL;
+    manager->selection = NULL;
     return manager;
 }
 
@@ -52,35 +67,41 @@ void source_manager_free(SourceManager *manager) {
     }
     g_list_free(manager->sources);
     
-    if (manager->tree_store) {
-        g_object_unref(manager->tree_store);
-    }
+    g_clear_object(&manager->source_store);
+    g_clear_object(&manager->tree_list_model);
+    g_clear_object(&manager->selection);
     
     g_free(manager);
 }
 
-static void add_source_to_store(GtkTreeStore *store, GtkTreeIter *parent_iter, Source *source) {
-    GtkTreeIter iter;
-    gtk_tree_store_append(store, &iter, parent_iter);
-    gtk_tree_store_set(store, &iter,
-                      0, source->name,
-                      1, source->icon_name,
-                      2, source->count,
-                      3, source,
-                      -1);
+/* Recursively add source and its children to BansheeSourceObject */
+static BansheeSourceObject* create_source_object_recursive(Source *source) {
+    BansheeSourceObject *obj = banshee_source_object_new(
+        source->name,
+        source->icon_name,
+        source
+    );
     
     for (GList *l = source->children; l != NULL; l = l->next) {
-        add_source_to_store(store, &iter, (Source *)l->data);
+        Source *child = (Source *)l->data;
+        BansheeSourceObject *child_obj = create_source_object_recursive(child);
+        banshee_source_object_add_child(obj, child_obj);
+        g_object_unref(child_obj);
     }
+    
+    return obj;
 }
 
 void source_manager_populate(SourceManager *manager) {
     if (!manager) return;
     
-    gtk_tree_store_clear(manager->tree_store);
+    g_list_store_remove_all(manager->source_store);
     
     for (GList *l = manager->sources; l != NULL; l = l->next) {
-        add_source_to_store(manager->tree_store, NULL, (Source *)l->data);
+        Source *source = (Source *)l->data;
+        BansheeSourceObject *obj = create_source_object_recursive(source);
+        g_list_store_append(manager->source_store, obj);
+        g_object_unref(obj);
     }
 }
 
@@ -222,6 +243,55 @@ void source_manager_add_default_sources(SourceManager *manager) {
     manager->active_source = music;
 }
 
+/* Factory setup callback for sidebar list items */
+static void setup_sidebar_item(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    
+    /* Expander for tree rows */
+    GtkWidget *expander = gtk_tree_expander_new();
+    gtk_tree_expander_set_indent_for_icon(GTK_TREE_EXPANDER(expander), TRUE);
+    
+    GtkWidget *content_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *icon = gtk_image_new();
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    
+    gtk_box_append(GTK_BOX(content_box), icon);
+    gtk_box_append(GTK_BOX(content_box), label);
+    
+    gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), content_box);
+    gtk_box_append(GTK_BOX(box), expander);
+    
+    gtk_list_item_set_child(list_item, box);
+}
+
+/* Factory bind callback for sidebar list items */
+static void bind_sidebar_item(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    
+    GtkWidget *box = gtk_list_item_get_child(list_item);
+    GtkWidget *expander = gtk_widget_get_first_child(box);
+    GtkWidget *content_box = gtk_tree_expander_get_child(GTK_TREE_EXPANDER(expander));
+    GtkWidget *icon = gtk_widget_get_first_child(content_box);
+    GtkWidget *label = gtk_widget_get_next_sibling(icon);
+    
+    GtkTreeListRow *row = gtk_list_item_get_item(list_item);
+    gtk_tree_expander_set_list_row(GTK_TREE_EXPANDER(expander), row);
+    
+    BansheeSourceObject *source_obj = gtk_tree_list_row_get_item(row);
+    if (source_obj) {
+        gtk_image_set_from_icon_name(GTK_IMAGE(icon), 
+            banshee_source_object_get_icon_name(source_obj));
+        gtk_label_set_text(GTK_LABEL(label), 
+            banshee_source_object_get_name(source_obj));
+        g_object_unref(source_obj);
+    }
+}
+
 GtkWidget* source_manager_create_sidebar(SourceManager *manager) {
     if (!manager) return NULL;
     
@@ -230,32 +300,65 @@ GtkWidget* source_manager_create_sidebar(SourceManager *manager) {
                                   GTK_POLICY_AUTOMATIC,
                                   GTK_POLICY_AUTOMATIC);
     
-    GtkWidget *tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(manager->tree_store));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(tree_view), FALSE);
+    /* Create tree list model for hierarchical display */
+    manager->tree_list_model = gtk_tree_list_model_new(
+        G_LIST_MODEL(g_object_ref(manager->source_store)),
+        FALSE,  /* passthrough */
+        TRUE,   /* autoexpand */
+        get_source_children,
+        NULL,
+        NULL
+    );
     
-    GtkCellRenderer *icon_renderer = gtk_cell_renderer_pixbuf_new();
-    GtkCellRenderer *text_renderer = gtk_cell_renderer_text_new();
+    /* Create selection model */
+    manager->selection = gtk_single_selection_new(
+        G_LIST_MODEL(g_object_ref(manager->tree_list_model)));
+    gtk_single_selection_set_autoselect(manager->selection, FALSE);
     
-    GtkTreeViewColumn *column = gtk_tree_view_column_new();
-    gtk_tree_view_column_pack_start(column, icon_renderer, FALSE);
-    gtk_tree_view_column_pack_start(column, text_renderer, TRUE);
+    /* Create factory for list items */
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(setup_sidebar_item), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(bind_sidebar_item), NULL);
     
-    gtk_tree_view_column_add_attribute(column, icon_renderer, "icon-name", 1);
-    gtk_tree_view_column_add_attribute(column, text_renderer, "text", 0);
+    /* Create list view */
+    GtkWidget *list_view = gtk_list_view_new(
+        GTK_SELECTION_MODEL(g_object_ref(manager->selection)), 
+        factory);
     
-    gtk_tree_view_append_column(GTK_TREE_VIEW(tree_view), column);
-    
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), tree_view);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), list_view);
     
     return scrolled;
 }
 
-Source* source_get_by_iter(SourceManager *manager, GtkTreeIter *iter) {
-    if (!manager || !iter) return NULL;
+Source* source_get_by_selection(SourceManager *manager) {
+    if (!manager || !manager->selection) return NULL;
     
-    Source *source;
-    gtk_tree_model_get(GTK_TREE_MODEL(manager->tree_store), iter, 3, &source, -1);
+    guint position = gtk_single_selection_get_selected(manager->selection);
+    if (position == GTK_INVALID_LIST_POSITION) return NULL;
+    
+    GtkTreeListRow *row = g_list_model_get_item(
+        G_LIST_MODEL(manager->tree_list_model), position);
+    if (!row) return NULL;
+    
+    BansheeSourceObject *source_obj = gtk_tree_list_row_get_item(row);
+    g_object_unref(row);
+    
+    if (!source_obj) return NULL;
+    
+    Source *source = banshee_source_object_get_source(source_obj);
+    g_object_unref(source_obj);
+    
     return source;
+}
+
+GListStore* source_manager_get_source_store(SourceManager *manager) {
+    if (!manager) return NULL;
+    return manager->source_store;
+}
+
+GtkSelectionModel* source_manager_get_selection(SourceManager *manager) {
+    if (!manager) return NULL;
+    return GTK_SELECTION_MODEL(manager->selection);
 }
 
 void source_update_count(Source *source, gint count) {

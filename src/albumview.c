@@ -36,7 +36,18 @@ void album_item_set_cover(AlbumItem *item, GdkPixbuf *pixbuf) {
     if (!item) return;
     g_clear_object(&item->cover);
     if (pixbuf) {
-        item->cover = GDK_PAINTABLE(gdk_texture_new_for_pixbuf(pixbuf));
+        /* GTK4: Use GBytes-based texture creation instead of deprecated gdk_texture_new_for_pixbuf */
+        GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
+        int width = gdk_pixbuf_get_width(pixbuf);
+        int height = gdk_pixbuf_get_height(pixbuf);
+        int stride = gdk_pixbuf_get_rowstride(pixbuf);
+        gboolean has_alpha = gdk_pixbuf_get_has_alpha(pixbuf);
+        
+        GdkTexture *texture = gdk_memory_texture_new(width, height,
+            has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8,
+            bytes, stride);
+        g_bytes_unref(bytes);
+        item->cover = GDK_PAINTABLE(texture);
         g_debug("album_item_set_cover: Created texture for %s", item->album ? item->album : "Unknown");
     }
     

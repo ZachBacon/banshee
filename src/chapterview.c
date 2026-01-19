@@ -1,51 +1,35 @@
 #include "chapterview.h"
 #include <string.h>
 
-enum {
-    CHAPTER_COL_START_TIME,
-    CHAPTER_COL_TITLE,
-    CHAPTER_COL_IMG,
-    CHAPTER_COL_URL,
-    CHAPTER_COL_COUNT
-};
-
-static void on_chapter_row_activated(GtkTreeView *treeview, GtkTreePath *path,
-                                     GtkTreeViewColumn *column, gpointer user_data) {
-    ChapterView *view = (ChapterView *)user_data;
-    (void)column;
-    
-    GtkTreeModel *model = gtk_tree_view_get_model(treeview);
-    GtkTreeIter iter;
-    
-    if (gtk_tree_model_get_iter(model, &iter, path)) {
-        gdouble start_time;
-        gtk_tree_model_get(model, &iter, CHAPTER_COL_START_TIME, &start_time, -1);
-        
-        /* Call seek callback if set */
-        if (view->seek_callback) {
-            view->seek_callback(view->seek_callback_data, start_time);
-        }
-    }
-}
-
-static void format_time_cell(GtkTreeViewColumn *col, GtkCellRenderer *cell,
-                             GtkTreeModel *model, GtkTreeIter *iter, gpointer data) {
-    (void)col; (void)data;
-    gdouble start_time;
-    gtk_tree_model_get(model, iter, CHAPTER_COL_START_TIME, &start_time, -1);
-    
+/* Helper function to format time */
+static gchar* format_time(gdouble start_time) {
     gint hours = (gint)(start_time / 3600);
     gint minutes = (gint)((start_time - hours * 3600) / 60);
     gint seconds = (gint)(start_time - hours * 3600 - minutes * 60);
     
-    gchar time_str[32];
     if (hours > 0) {
-        g_snprintf(time_str, sizeof(time_str), "%d:%02d:%02d", hours, minutes, seconds);
+        return g_strdup_printf("%d:%02d:%02d", hours, minutes, seconds);
     } else {
-        g_snprintf(time_str, sizeof(time_str), "%d:%02d", minutes, seconds);
+        return g_strdup_printf("%d:%02d", minutes, seconds);
+    }
+}
+
+/* GTK4: Chapter row activation handler */
+static void on_chapter_activated(GtkColumnView *column_view, guint position, gpointer user_data) {
+    ChapterView *view = (ChapterView *)user_data;
+    (void)column_view;
+    
+    BansheeChapterObject *obj = g_list_model_get_item(G_LIST_MODEL(view->store), position);
+    if (!obj) return;
+    
+    gdouble start_time = banshee_chapter_object_get_start_time(obj);
+    
+    /* Call seek callback if set */
+    if (view->seek_callback) {
+        view->seek_callback(view->seek_callback_data, start_time);
     }
     
-    g_object_set(cell, "text", time_str, NULL);
+    g_object_unref(obj);
 }
 
 static gpointer copy_chapter(gconstpointer src, gpointer data) {
@@ -57,6 +41,47 @@ static gpointer copy_chapter(gconstpointer src, gpointer data) {
     copy->img = g_strdup(orig->img);
     copy->url = g_strdup(orig->url);
     return copy;
+}
+
+/* GTK4 Factory functions for chapter columns */
+static void setup_time_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_time_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeChapterObject *obj = gtk_list_item_get_item(list_item);
+    if (obj) {
+        gchar *time_str = format_time(banshee_chapter_object_get_start_time(obj));
+        gtk_label_set_text(GTK_LABEL(label), time_str);
+        g_free(time_str);
+    }
+}
+
+static void setup_title_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_title_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeChapterObject *obj = gtk_list_item_get_item(list_item);
+    if (obj) {
+        const gchar *title = banshee_chapter_object_get_title(obj);
+        gtk_label_set_text(GTK_LABEL(label), title ? title : "Untitled");
+    }
 }
 
 ChapterView* chapter_view_new(void) {
@@ -72,42 +97,43 @@ ChapterView* chapter_view_new(void) {
     gtk_widget_set_margin_bottom(label, 6);
     gtk_box_append(GTK_BOX(view->container), label);
     
-    /* Create list store */
-    view->store = gtk_list_store_new(CHAPTER_COL_COUNT,
-                                     G_TYPE_DOUBLE,   /* Start time */
-                                     G_TYPE_STRING,   /* Title */
-                                     G_TYPE_STRING,   /* Image URL */
-                                     G_TYPE_STRING);  /* URL */
+    /* GTK4: Create GListStore for chapters */
+    view->store = g_list_store_new(BANSHEE_TYPE_CHAPTER_OBJECT);
     
-    /* Create tree view */
-    view->listview = gtk_tree_view_new_with_model(GTK_TREE_MODEL(view->store));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view->listview), TRUE);
+    /* Create selection model */
+    view->selection = gtk_single_selection_new(G_LIST_MODEL(view->store));
+    gtk_single_selection_set_autoselect(view->selection, FALSE);
+    
+    /* Create GtkColumnView */
+    view->columnview = gtk_column_view_new(GTK_SELECTION_MODEL(view->selection));
+    gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(view->columnview), FALSE);
+    gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(view->columnview), FALSE);
     
     /* Time column */
-    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
-    GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes(
-        "Time", renderer, "text", CHAPTER_COL_START_TIME, NULL);
-    gtk_tree_view_column_set_cell_data_func(column, renderer,
-        format_time_cell, NULL, NULL);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->listview), column);
+    GtkListItemFactory *time_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(time_factory, "setup", G_CALLBACK(setup_time_label), NULL);
+    g_signal_connect(time_factory, "bind", G_CALLBACK(bind_time_label), NULL);
+    GtkColumnViewColumn *time_column = gtk_column_view_column_new("Time", time_factory);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->columnview), time_column);
     
     /* Title column */
-    renderer = gtk_cell_renderer_text_new();
-    column = gtk_tree_view_column_new_with_attributes(
-        "Chapter", renderer, "text", CHAPTER_COL_TITLE, NULL);
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    gtk_tree_view_column_set_expand(column, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->listview), column);
+    GtkListItemFactory *title_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(title_factory, "setup", G_CALLBACK(setup_title_label), NULL);
+    g_signal_connect(title_factory, "bind", G_CALLBACK(bind_title_label), NULL);
+    GtkColumnViewColumn *title_column = gtk_column_view_column_new("Chapter", title_factory);
+    gtk_column_view_column_set_resizable(title_column, TRUE);
+    gtk_column_view_column_set_expand(title_column, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->columnview), title_column);
     
     /* Connect row activation signal */
-    g_signal_connect(view->listview, "row-activated",
-                    G_CALLBACK(on_chapter_row_activated), view);
+    g_signal_connect(view->columnview, "activate",
+                    G_CALLBACK(on_chapter_activated), view);
     
     /* Add to scrolled window */
     GtkWidget *scrolled = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), view->listview);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), view->columnview);
     gtk_widget_set_vexpand(scrolled, TRUE);
     gtk_box_append(GTK_BOX(view->container), scrolled);
 
@@ -120,6 +146,14 @@ void chapter_view_free(ChapterView *view) {
     
     if (view->chapters) {
         g_list_free_full(view->chapters, (GDestroyNotify)podcast_chapter_free);
+    }
+    
+    if (view->store) {
+        g_object_unref(view->store);
+    }
+    
+    if (view->selection) {
+        g_object_unref(view->selection);
     }
     
     g_free(view);
@@ -142,21 +176,21 @@ void chapter_view_set_chapters(ChapterView *view, GList *chapters) {
     for (GList *l = chapters; l != NULL; l = l->next) {
         PodcastChapter *chapter = (PodcastChapter *)l->data;
         
-        GtkTreeIter iter;
-        gtk_list_store_append(view->store, &iter);
-        gtk_list_store_set(view->store, &iter,
-                          CHAPTER_COL_START_TIME, chapter->start_time,
-                          CHAPTER_COL_TITLE, chapter->title ? chapter->title : "Untitled",
-                          CHAPTER_COL_IMG, chapter->img,
-                          CHAPTER_COL_URL, chapter->url,
-                          -1);
+        BansheeChapterObject *obj = banshee_chapter_object_new(
+            chapter->start_time,
+            chapter->title ? chapter->title : "Untitled",
+            chapter->img,
+            chapter->url
+        );
+        g_list_store_append(view->store, obj);
+        g_object_unref(obj);
     }
 }
 
 void chapter_view_clear(ChapterView *view) {
     if (!view) return;
     
-    gtk_list_store_clear(view->store);
+    g_list_store_remove_all(view->store);
     
     if (view->chapters) {
         g_list_free_full(view->chapters, (GDestroyNotify)podcast_chapter_free);
@@ -172,26 +206,22 @@ void chapter_view_highlight_current(ChapterView *view, gdouble current_time) {
     if (!current_chapter) return;
     
     /* Find and select the corresponding row */
-    GtkTreeIter iter;
-    gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(view->store), &iter);
+    guint n_items = g_list_model_get_n_items(G_LIST_MODEL(view->store));
     
-    while (valid) {
-        gdouble start_time;
-        gtk_tree_model_get(GTK_TREE_MODEL(view->store), &iter,
-                          CHAPTER_COL_START_TIME, &start_time, -1);
-        
-        if (start_time == current_chapter->start_time) {
-            GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->listview));
-            gtk_tree_selection_select_iter(selection, &iter);
+    for (guint i = 0; i < n_items; i++) {
+        BansheeChapterObject *obj = g_list_model_get_item(G_LIST_MODEL(view->store), i);
+        if (obj) {
+            gdouble start_time = banshee_chapter_object_get_start_time(obj);
             
-            /* Scroll to the selected row */
-            GtkTreePath *path = gtk_tree_model_get_path(GTK_TREE_MODEL(view->store), &iter);
-            gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(view->listview), path, NULL, FALSE, 0, 0);
-            gtk_tree_path_free(path);
-            break;
+            if (start_time == current_chapter->start_time) {
+                gtk_single_selection_set_selected(view->selection, i);
+                
+                /* Scroll to the selected row - GTK4 does this automatically with selection changes */
+                g_object_unref(obj);
+                break;
+            }
+            g_object_unref(obj);
         }
-        
-        valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(view->store), &iter);
     }
 }
 

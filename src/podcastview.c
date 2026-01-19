@@ -10,7 +10,7 @@ static void on_live_button_clicked(GtkButton *button, gpointer user_data);
 static void on_chapter_seek(gpointer user_data, gdouble time);
 static void on_funding_url_clicked(GtkWidget *button, gpointer user_data);
 static void on_cancel_button_clicked(GtkButton *button, gpointer user_data);
-static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer user_data);
+static void on_episode_selection_changed(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data);
 static void update_live_indicator(PodcastView *view, Podcast *podcast);
 
 /* GTK4 dialog helper */
@@ -152,6 +152,7 @@ static void update_live_indicator(PodcastView *view, Podcast *podcast) {
 static void on_download_progress(gpointer user_data, gint episode_id, gdouble progress, const gchar *status);
 static void on_download_complete(gpointer user_data, gint episode_id, gboolean success, const gchar *error_msg);
 
+/* Column enums - kept for reference, but now use GObject properties */
 enum {
     PODCAST_COL_ID,
     PODCAST_COL_TITLE,
@@ -168,15 +169,123 @@ enum {
     EPISODE_COL_COUNT
 };
 
-static void on_podcast_selection_changed(GtkTreeSelection *selection, gpointer user_data) {
+/* ============================================================================
+ * GTK4 Column Factory Functions for Podcast List
+ * ============================================================================ */
+
+static void setup_podcast_title_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_podcast_title_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheePodcastObject *podcast = gtk_list_item_get_item(list_item);
+    if (podcast) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_podcast_object_get_title(podcast));
+    }
+}
+
+/* ============================================================================
+ * GTK4 Column Factory Functions for Episode List
+ * ============================================================================ */
+
+static void setup_episode_title_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_episode_title_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeEpisodeObject *episode = gtk_list_item_get_item(list_item);
+    if (episode) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_episode_object_get_title(episode));
+    }
+}
+
+static void setup_episode_date_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_episode_date_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeEpisodeObject *episode = gtk_list_item_get_item(list_item);
+    if (episode) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_episode_object_get_date(episode));
+    }
+}
+
+static void setup_episode_duration_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 1.0);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_episode_duration_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeEpisodeObject *episode = gtk_list_item_get_item(list_item);
+    if (episode) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_episode_object_get_duration(episode));
+    }
+}
+
+static void setup_episode_downloaded_check(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *check = gtk_check_button_new();
+    gtk_widget_set_sensitive(check, FALSE);  /* Read-only indicator */
+    gtk_list_item_set_child(list_item, check);
+}
+
+static void bind_episode_downloaded_check(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *check = gtk_list_item_get_child(list_item);
+    BansheeEpisodeObject *episode = gtk_list_item_get_item(list_item);
+    if (episode) {
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(check), 
+            banshee_episode_object_get_downloaded(episode));
+    }
+}
+
+static void on_podcast_selection_changed(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data) {
+    (void)position;
+    (void)n_items;
     PodcastView *view = (PodcastView *)user_data;
     
-    GtkTreeModel *model;
-    GtkTreeIter iter;
+    /* Get selected item using GTK4 API */
+    GtkSingleSelection *single_sel = GTK_SINGLE_SELECTION(selection);
+    guint selected_pos = gtk_single_selection_get_selected(single_sel);
     
-    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
-        gint podcast_id;
-        gtk_tree_model_get(model, &iter, PODCAST_COL_ID, &podcast_id, -1);
+    if (selected_pos != GTK_INVALID_LIST_POSITION) {
+        BansheePodcastObject *podcast_obj = g_list_model_get_item(
+            G_LIST_MODEL(view->podcast_store), selected_pos);
+        
+        if (!podcast_obj) return;
+        
+        gint podcast_id = banshee_podcast_object_get_id(podcast_obj);
+        g_object_unref(podcast_obj);
         
         view->selected_podcast_id = podcast_id;
         
@@ -242,15 +351,23 @@ static void on_podcast_selection_changed(GtkTreeSelection *selection, gpointer u
     }
 }
 
-static void on_episode_selection_changed(GtkTreeSelection *selection, gpointer user_data) {
+static void on_episode_selection_changed(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data) {
+    (void)position;
+    (void)n_items;
     PodcastView *view = (PodcastView *)user_data;
     
-    GtkTreeModel *model;
-    GtkTreeIter iter;
+    /* Get selected item using GTK4 API */
+    GtkSingleSelection *single_sel = GTK_SINGLE_SELECTION(selection);
+    guint selected_pos = gtk_single_selection_get_selected(single_sel);
     
-    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
-        gint episode_id;
-        gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
+    if (selected_pos != GTK_INVALID_LIST_POSITION) {
+        BansheeEpisodeObject *episode_obj = g_list_model_get_item(
+            G_LIST_MODEL(view->episode_store), selected_pos);
+        
+        if (!episode_obj) return;
+        
+        gint episode_id = banshee_episode_object_get_id(episode_obj);
+        g_object_unref(episode_obj);
         
         /* Load episode and its funding information */
         PodcastEpisode *episode = database_get_episode_by_id(view->database, episode_id);
@@ -383,14 +500,15 @@ static void on_refresh_button_clicked(GtkButton *button, gpointer user_data) {
     podcast_view_refresh_podcasts(view);
     
     /* If a podcast is selected, refresh its episodes too */
-    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->podcast_listview));
-    GtkTreeModel *model;
-    GtkTreeIter iter;
-    
-    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
-        gint podcast_id;
-        gtk_tree_model_get(model, &iter, PODCAST_COL_ID, &podcast_id, -1);
-        podcast_view_refresh_episodes(view, podcast_id);
+    guint selected_pos = gtk_single_selection_get_selected(view->podcast_selection);
+    if (selected_pos != GTK_INVALID_LIST_POSITION) {
+        BansheePodcastObject *podcast_obj = g_list_model_get_item(
+            G_LIST_MODEL(view->podcast_store), selected_pos);
+        if (podcast_obj) {
+            gint podcast_id = banshee_podcast_object_get_id(podcast_obj);
+            g_object_unref(podcast_obj);
+            podcast_view_refresh_episodes(view, podcast_id);
+        }
     }
 }
 
@@ -398,14 +516,15 @@ static void on_download_button_clicked(GtkButton *button, gpointer user_data) {
     PodcastView *view = (PodcastView *)user_data;
     (void)button;
     
-    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->episode_listview));
-    GtkTreeModel *model;
-    GtkTreeIter iter;
-    
-    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
-        gint episode_id;
-        gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
-        podcast_view_download_episode(view, episode_id);
+    guint selected_pos = gtk_single_selection_get_selected(view->episode_selection);
+    if (selected_pos != GTK_INVALID_LIST_POSITION) {
+        BansheeEpisodeObject *episode_obj = g_list_model_get_item(
+            G_LIST_MODEL(view->episode_store), selected_pos);
+        if (episode_obj) {
+            gint episode_id = banshee_episode_object_get_id(episode_obj);
+            g_object_unref(episode_obj);
+            podcast_view_download_episode(view, episode_id);
+        }
     }
 }
 
@@ -419,17 +538,17 @@ static void on_cancel_button_clicked(GtkButton *button, gpointer user_data) {
     }
 }
 
-static void on_episode_row_activated(GtkTreeView *treeview, GtkTreePath *path, 
-                                     GtkTreeViewColumn *column, gpointer user_data) {
+/* GTK4 activate handler for episode double-click */
+static void on_episode_activated(GtkColumnView *column_view, guint position, gpointer user_data) {
+    (void)column_view;
     PodcastView *view = (PodcastView *)user_data;
-    (void)column;
     
-    GtkTreeModel *model = gtk_tree_view_get_model(treeview);
-    GtkTreeIter iter;
+    BansheeEpisodeObject *episode_obj = g_list_model_get_item(
+        G_LIST_MODEL(view->episode_store), position);
     
-    if (gtk_tree_model_get_iter(model, &iter, path)) {
-        gint episode_id;
-        gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
+    if (episode_obj) {
+        gint episode_id = banshee_episode_object_get_id(episode_obj);
+        g_object_unref(episode_obj);
         podcast_view_play_episode(view, episode_id);
     }
 }
@@ -507,148 +626,7 @@ static gchar* strip_html_and_decode(const gchar *html) {
     return decoded;
 }
 
-static gboolean on_episode_query_tooltip(GtkWidget *widget, gint x, gint y, 
-                                         gboolean keyboard_mode, GtkTooltip *tooltip,
-                                         gpointer user_data) {
-    PodcastView *view = (PodcastView *)user_data;
-    GtkTreeView *treeview = GTK_TREE_VIEW(widget);
-    GtkTreeModel *model;
-    GtkTreePath *path = NULL;
-    GtkTreeIter iter;
-    
-    (void)keyboard_mode;
-    
-    /* Get the path at the mouse position */
-    if (!gtk_tree_view_get_path_at_pos(treeview, x, y, &path, NULL, NULL, NULL)) {
-        return FALSE;
-    }
-    
-    model = gtk_tree_view_get_model(treeview);
-    if (!gtk_tree_model_get_iter(model, &iter, path)) {
-        gtk_tree_path_free(path);
-        return FALSE;
-    }
-    
-    gint episode_id;
-    gtk_tree_model_get(model, &iter, EPISODE_COL_ID, &episode_id, -1);
-    gtk_tree_path_free(path);
-    
-    /* Get episode details from database */
-    GList *episodes = database_get_podcast_episodes(view->database, view->selected_podcast_id);
-    PodcastEpisode *found_episode = NULL;
-    
-    for (GList *l = episodes; l != NULL; l = l->next) {
-        PodcastEpisode *episode = (PodcastEpisode *)l->data;
-        if (episode->id == episode_id) {
-            found_episode = episode;
-            break;
-        }
-    }
-    
-    if (!found_episode) {
-        g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
-        return FALSE;
-    }
-    
-    /* Build tooltip markup */
-    GString *markup = g_string_new("");
-    
-    /* Episode title (bold) - escape it for markup */
-    gchar *escaped_title = g_markup_escape_text(found_episode->title, -1);
-    g_string_append_printf(markup, "<b>%s</b>\n\n", escaped_title);
-    g_free(escaped_title);
-    
-    /* Description - strip HTML and decode entities */
-    if (found_episode->description && strlen(found_episode->description) > 0) {
-        gchar *plain_desc = strip_html_and_decode(found_episode->description);
-        
-        /* Limit description length for tooltip */
-        gsize desc_len = strlen(plain_desc);
-        if (desc_len > 300) {
-            gchar *truncated = g_strndup(plain_desc, 297);
-            gchar *escaped_desc = g_markup_escape_text(truncated, -1);
-            g_string_append_printf(markup, "%s...\n\n", escaped_desc);
-            g_free(escaped_desc);
-            g_free(truncated);
-        } else if (desc_len > 0) {
-            gchar *escaped_desc = g_markup_escape_text(plain_desc, -1);
-            g_string_append_printf(markup, "%s\n\n", escaped_desc);
-            g_free(escaped_desc);
-        }
-        g_free(plain_desc);
-    }
-    
-    /* Episode metadata */
-    if (found_episode->duration > 0) {
-        gint hours = found_episode->duration / 3600;
-        gint minutes = (found_episode->duration % 3600) / 60;
-        gint seconds = found_episode->duration % 60;
-        
-        g_string_append(markup, "<b>Duration:</b> ");
-        if (hours > 0) {
-            g_string_append_printf(markup, "%dh %dm %ds\n", hours, minutes, seconds);
-        } else {
-            g_string_append_printf(markup, "%dm %ds\n", minutes, seconds);
-        }
-    }
-    
-    /* Season and episode number */
-    if (found_episode->season || found_episode->episode_num) {
-        g_string_append(markup, "<b>Episode:</b> ");
-        if (found_episode->season) {
-            gchar *escaped_season = g_markup_escape_text(found_episode->season, -1);
-            g_string_append_printf(markup, "Season %s", escaped_season);
-            g_free(escaped_season);
-        }
-        if (found_episode->episode_num) {
-            gchar *escaped_episode = g_markup_escape_text(found_episode->episode_num, -1);
-            if (found_episode->season) {
-                g_string_append_printf(markup, ", Episode %s", escaped_episode);
-            } else {
-                g_string_append_printf(markup, "Episode %s", escaped_episode);
-            }
-            g_free(escaped_episode);
-        }
-        g_string_append(markup, "\n");
-    }
-    
-    /* Download status */
-    if (found_episode->downloaded) {
-        g_string_append(markup, "<b>Status:</b> Downloaded\n");
-    }
-    
-    /* Play position */
-    if (found_episode->play_position > 0) {
-        gint pos_hours = found_episode->play_position / 3600;
-        gint pos_minutes = (found_episode->play_position % 3600) / 60;
-        gint pos_seconds = found_episode->play_position % 60;
-        
-        g_string_append(markup, "<b>Position:</b> ");
-        if (pos_hours > 0) {
-            g_string_append_printf(markup, "%dh %dm %ds\n", pos_hours, pos_minutes, pos_seconds);
-        } else {
-            g_string_append_printf(markup, "%dm %ds\n", pos_minutes, pos_seconds);
-        }
-    }
-    
-    /* Podcast 2.0 features */
-    if (found_episode->transcript_url) {
-        g_string_append(markup, "📝 <i>Transcript available</i>\n");
-    }
-    if (found_episode->chapters_url || (found_episode->enclosure_url && strstr(found_episode->enclosure_url, ".mp3"))) {
-        g_string_append(markup, "📑 <i>Chapters available</i>\n");
-    }
-    if (found_episode->funding && g_list_length(found_episode->funding) > 0) {
-        g_string_append(markup, "💝 <i>Support options available</i>\n");
-    }
-    
-    gtk_tooltip_set_markup(tooltip, markup->str);
-    
-    g_string_free(markup, TRUE);
-    g_list_free_full(episodes, (GDestroyNotify)podcast_episode_free);
-    
-    return TRUE;
-}
+/* Tooltip functionality removed - requires GTK4 reimplementation with GtkPopover or per-item tooltips */
 
 static void on_chapter_seek(gpointer user_data, gdouble time) {
     PodcastView *view = (PodcastView *)user_data;
@@ -1178,24 +1156,29 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     view->paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_paned_set_position(GTK_PANED(view->paned), 250);
     
-    /* Podcast list */
-    view->podcast_store = gtk_list_store_new(PODCAST_COL_COUNT,
-                                             G_TYPE_INT,    /* ID */
-                                             G_TYPE_STRING, /* Title */
-                                             G_TYPE_STRING  /* Author */
-                                            );
+    /* Podcast list - GTK4 GListStore/GtkColumnView */
+    view->podcast_store = g_list_store_new(BANSHEE_TYPE_PODCAST_OBJECT);
+    view->podcast_selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(view->podcast_store)));
+    gtk_single_selection_set_autoselect(view->podcast_selection, FALSE);
     
-    view->podcast_listview = gtk_tree_view_new_with_model(GTK_TREE_MODEL(view->podcast_store));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view->podcast_listview), TRUE);
+    /* Create podcast column view */
+    view->podcast_listview = gtk_column_view_new(GTK_SELECTION_MODEL(g_object_ref(view->podcast_selection)));
+    gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(view->podcast_listview), FALSE);
+    gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(view->podcast_listview), FALSE);
     
-    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
-    GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes("Podcast", renderer, "text", PODCAST_COL_TITLE, NULL);
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->podcast_listview), column);
+    /* Podcast title column */
+    GtkListItemFactory *factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(setup_podcast_title_label), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(bind_podcast_title_label), NULL);
+    GtkColumnViewColumn *column = gtk_column_view_column_new("Podcast", factory);
+    gtk_column_view_column_set_resizable(column, TRUE);
+    gtk_column_view_column_set_expand(column, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->podcast_listview), column);
     
-    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->podcast_listview));
-    gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
-    g_signal_connect(selection, "changed", G_CALLBACK(on_podcast_selection_changed), view);
+    /* Connect selection signal */
+    view->podcast_selection_handler_id = g_signal_connect(
+        view->podcast_selection, "selection-changed", 
+        G_CALLBACK(on_podcast_selection_changed), view);
     
     GtkWidget *podcast_scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(podcast_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
@@ -1204,48 +1187,54 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     gtk_paned_set_shrink_start_child(GTK_PANED(view->paned), TRUE);
     gtk_paned_set_resize_start_child(GTK_PANED(view->paned), FALSE);
     
-    /* Episode list */
-    view->episode_store = gtk_list_store_new(EPISODE_COL_COUNT,
-                                             G_TYPE_INT,     /* ID */
-                                             G_TYPE_STRING,  /* Title */
-                                             G_TYPE_STRING,  /* Date */
-                                             G_TYPE_STRING,  /* Duration */
-                                             G_TYPE_BOOLEAN  /* Downloaded */
-                                            );
+    /* Episode list - GTK4 GListStore/GtkColumnView */
+    view->episode_store = g_list_store_new(BANSHEE_TYPE_EPISODE_OBJECT);
+    view->episode_selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(view->episode_store)));
+    gtk_single_selection_set_autoselect(view->episode_selection, FALSE);
     
-    view->episode_listview = gtk_tree_view_new_with_model(GTK_TREE_MODEL(view->episode_store));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view->episode_listview), TRUE);
+    /* Create episode column view */
+    view->episode_listview = gtk_column_view_new(GTK_SELECTION_MODEL(g_object_ref(view->episode_selection)));
+    gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(view->episode_listview), TRUE);
+    gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(view->episode_listview), FALSE);
     
-    /* Enable tooltips for episodes */
-    gtk_widget_set_has_tooltip(view->episode_listview, TRUE);
-    g_signal_connect(view->episode_listview, "query-tooltip", 
-                     G_CALLBACK(on_episode_query_tooltip), view);
+    /* Episode title column */
+    factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(setup_episode_title_label), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(bind_episode_title_label), NULL);
+    column = gtk_column_view_column_new("Episode", factory);
+    gtk_column_view_column_set_resizable(column, TRUE);
+    gtk_column_view_column_set_expand(column, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->episode_listview), column);
     
-    renderer = gtk_cell_renderer_text_new();
-    column = gtk_tree_view_column_new_with_attributes("Episode", renderer, "text", EPISODE_COL_TITLE, NULL);
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    gtk_tree_view_column_set_expand(column, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->episode_listview), column);
+    /* Episode date column */
+    factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(setup_episode_date_label), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(bind_episode_date_label), NULL);
+    column = gtk_column_view_column_new("Date", factory);
+    gtk_column_view_column_set_resizable(column, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->episode_listview), column);
     
-    renderer = gtk_cell_renderer_text_new();
-    column = gtk_tree_view_column_new_with_attributes("Date", renderer, "text", EPISODE_COL_DATE, NULL);
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->episode_listview), column);
+    /* Episode duration column */
+    factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(setup_episode_duration_label), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(bind_episode_duration_label), NULL);
+    column = gtk_column_view_column_new("Duration", factory);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->episode_listview), column);
     
-    renderer = gtk_cell_renderer_text_new();
-    column = gtk_tree_view_column_new_with_attributes("Duration", renderer, "text", EPISODE_COL_DURATION, NULL);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->episode_listview), column);
+    /* Episode downloaded column */
+    factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(factory, "setup", G_CALLBACK(setup_episode_downloaded_check), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(bind_episode_downloaded_check), NULL);
+    column = gtk_column_view_column_new("Downloaded", factory);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->episode_listview), column);
     
-    renderer = gtk_cell_renderer_toggle_new();
-    column = gtk_tree_view_column_new_with_attributes("Downloaded", renderer, "active", EPISODE_COL_DOWNLOADED, NULL);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->episode_listview), column);
+    /* Connect episode selection signal */
+    view->episode_selection_handler_id = g_signal_connect(
+        view->episode_selection, "selection-changed", 
+        G_CALLBACK(on_episode_selection_changed), view);
     
-    /* Connect row-activated signal for double-click playback */
-    g_signal_connect(view->episode_listview, "row-activated", G_CALLBACK(on_episode_row_activated), view);
-    
-    /* Connect selection-changed signal to update episode features */
-    GtkTreeSelection *episode_selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->episode_listview));
-    g_signal_connect(episode_selection, "changed", G_CALLBACK(on_episode_selection_changed), view);
+    /* Connect activate signal for double-click playback using GtkColumnView */
+    g_signal_connect(view->episode_listview, "activate", G_CALLBACK(on_episode_activated), view);
     
     GtkWidget *episode_scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(episode_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
@@ -1384,27 +1373,27 @@ void podcast_view_add_subscription(PodcastView *view) {
 void podcast_view_refresh_podcasts(PodcastView *view) {
     if (!view) return;
     
-    gtk_list_store_clear(view->podcast_store);
+    g_list_store_remove_all(view->podcast_store);
     
     GList *podcasts = podcast_manager_get_podcasts(view->podcast_manager);
     
     for (GList *l = podcasts; l != NULL; l = l->next) {
         Podcast *podcast = (Podcast *)l->data;
         
-        GtkTreeIter iter;
-        gtk_list_store_append(view->podcast_store, &iter);
-        gtk_list_store_set(view->podcast_store, &iter,
-                          PODCAST_COL_ID, podcast->id,
-                          PODCAST_COL_TITLE, podcast->title ? podcast->title : "Unknown",
-                          PODCAST_COL_AUTHOR, podcast->author ? podcast->author : "",
-                          -1);
+        BansheePodcastObject *obj = banshee_podcast_object_new(
+            podcast->id,
+            podcast->title ? podcast->title : "Unknown",
+            podcast->author ? podcast->author : ""
+        );
+        g_list_store_append(view->podcast_store, obj);
+        g_object_unref(obj);
     }
 }
 
 void podcast_view_refresh_episodes(PodcastView *view, gint podcast_id) {
     if (!view) return;
     
-    gtk_list_store_clear(view->episode_store);
+    g_list_store_remove_all(view->episode_store);
     
     GList *episodes = podcast_manager_get_episodes(view->podcast_manager, podcast_id);
     
@@ -1437,15 +1426,15 @@ void podcast_view_refresh_episodes(PodcastView *view, gint podcast_id) {
             }
         }
         
-        GtkTreeIter iter;
-        gtk_list_store_append(view->episode_store, &iter);
-        gtk_list_store_set(view->episode_store, &iter,
-                          EPISODE_COL_ID, episode->id,
-                          EPISODE_COL_TITLE, episode->title ? episode->title : "Unknown",
-                          EPISODE_COL_DATE, date_str,
-                          EPISODE_COL_DURATION, duration_str,
-                          EPISODE_COL_DOWNLOADED, episode->downloaded,
-                          -1);
+        BansheeEpisodeObject *obj = banshee_episode_object_new(
+            episode->id,
+            episode->title ? episode->title : "Unknown",
+            date_str,
+            duration_str,
+            episode->downloaded
+        );
+        g_list_store_append(view->episode_store, obj);
+        g_object_unref(obj);
     }
 }
 
@@ -1574,6 +1563,15 @@ static void on_download_progress(gpointer user_data, gint episode_id, gdouble pr
     g_idle_add(update_progress_ui, update);
 }
 
+/* GTK4: Helper to hide widget after timeout (replaces deprecated gtk_widget_hide callback) */
+static gboolean hide_progress_box_cb(gpointer user_data) {
+    GtkWidget *widget = GTK_WIDGET(user_data);
+    if (widget && GTK_IS_WIDGET(widget)) {
+        gtk_widget_set_visible(widget, FALSE);
+    }
+    return G_SOURCE_REMOVE;
+}
+
 typedef struct {
     PodcastView *view;
     gint episode_id;
@@ -1605,7 +1603,7 @@ static gboolean update_complete_ui(gpointer user_data) {
         gtk_widget_set_sensitive(update->view->cancel_button, FALSE);
         
         /* Auto-hide progress after 3 seconds */
-        g_timeout_add_seconds(3, (GSourceFunc)gtk_widget_hide, update->view->progress_box);
+        g_timeout_add_seconds(3, hide_progress_box_cb, update->view->progress_box);
     }
     
     g_free(update->error_msg);
@@ -1681,7 +1679,7 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
     }
     
     GList *all_podcasts = database_get_podcasts(view->database);
-    gtk_list_store_clear(view->podcast_store);
+    g_list_store_remove_all(view->podcast_store);
     
     gchar *search_lower = g_utf8_strdown(search_text, -1);
     
@@ -1706,7 +1704,7 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
     }
     
     /* Search through episodes from ALL podcasts and track which podcasts have matches */
-    gtk_list_store_clear(view->episode_store);
+    g_list_store_remove_all(view->episode_store);
     
     for (GList *p = all_podcasts; p != NULL; p = p->next) {
         Podcast *podcast = (Podcast *)p->data;
@@ -1726,9 +1724,6 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
             
             if (match) {
                 podcast_has_episode_match = TRUE;
-                
-                GtkTreeIter iter;
-                gtk_list_store_append(view->episode_store, &iter);
                 
                 gchar date_str[64] = "Unknown";
                 if (episode->published_date > 0) {
@@ -1753,13 +1748,15 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
                     }
                 }
                 
-                gtk_list_store_set(view->episode_store, &iter,
-                                 EPISODE_COL_ID, episode->id,
-                                 EPISODE_COL_TITLE, episode->title,
-                                 EPISODE_COL_DATE, date_str,
-                                 EPISODE_COL_DURATION, duration_str,
-                                 EPISODE_COL_DOWNLOADED, episode->local_file_path != NULL,
-                                 -1);
+                BansheeEpisodeObject *obj = banshee_episode_object_new(
+                    episode->id,
+                    episode->title ? episode->title : "Unknown",
+                    date_str,
+                    duration_str,
+                    episode->local_file_path != NULL
+                );
+                g_list_store_append(view->episode_store, obj);
+                g_object_unref(obj);
             }
         }
         
@@ -1776,13 +1773,13 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
         Podcast *podcast = (Podcast *)l->data;
         
         if (g_hash_table_contains(podcasts_with_matches, GINT_TO_POINTER(podcast->id))) {
-            GtkTreeIter iter;
-            gtk_list_store_append(view->podcast_store, &iter);
-            gtk_list_store_set(view->podcast_store, &iter,
-                             PODCAST_COL_ID, podcast->id,
-                             PODCAST_COL_TITLE, podcast->title,
-                             PODCAST_COL_AUTHOR, podcast->author,
-                             -1);
+            BansheePodcastObject *obj = banshee_podcast_object_new(
+                podcast->id,
+                podcast->title ? podcast->title : "Unknown",
+                podcast->author ? podcast->author : ""
+            );
+            g_list_store_append(view->podcast_store, obj);
+            g_object_unref(obj);
         }
     }
     

@@ -6,6 +6,7 @@
 #include "database.h"
 #include "chapterview.h"
 #include "transcriptview.h"
+#include "models.h"
 
 /* Callback for episode playback */
 typedef void (*EpisodePlayCallback)(gpointer user_data, const gchar *uri, const gchar *title, GList *chapters, const gchar *transcript_url, const gchar *transcript_type, GList *funding);
@@ -17,13 +18,17 @@ typedef struct {
     GtkWidget *container;
     GtkWidget *paned;
     
-    /* Podcast list (left side) */
+    /* Podcast list (left side) - GTK4 GListStore/GtkColumnView */
     GtkWidget *podcast_listview;
-    GtkListStore *podcast_store;
+    GListStore *podcast_store;
+    GtkSingleSelection *podcast_selection;
+    gulong podcast_selection_handler_id;
     
-    /* Episode list (right side) */
+    /* Episode list (right side) - GTK4 GListStore/GtkColumnView */
     GtkWidget *episode_listview;
-    GtkListStore *episode_store;
+    GListStore *episode_store;
+    GtkSingleSelection *episode_selection;
+    gulong episode_selection_handler_id;
     
     /* Toolbar buttons */
     GtkWidget *add_button;

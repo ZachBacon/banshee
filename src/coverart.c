@@ -594,6 +594,7 @@ void coverart_fetch_from_url_async(CoverArtManager *manager, const gchar *url,
 GtkWidget* coverart_widget_new(gint size) {
     GtkWidget *image = gtk_image_new();
     gtk_widget_set_size_request(image, size, size);
+    gtk_image_set_pixel_size(GTK_IMAGE(image), size);
     return image;
 }
 
@@ -601,7 +602,19 @@ void coverart_widget_set_image(GtkWidget *widget, GdkPixbuf *pixbuf) {
     if (!GTK_IS_IMAGE(widget)) return;
     
     if (pixbuf) {
-        gtk_image_set_from_pixbuf(GTK_IMAGE(widget), pixbuf);
+        /* GTK4: Use GdkTexture instead of deprecated gtk_image_set_from_pixbuf */
+        GBytes *bytes = gdk_pixbuf_read_pixel_bytes(pixbuf);
+        int width = gdk_pixbuf_get_width(pixbuf);
+        int height = gdk_pixbuf_get_height(pixbuf);
+        int stride = gdk_pixbuf_get_rowstride(pixbuf);
+        gboolean has_alpha = gdk_pixbuf_get_has_alpha(pixbuf);
+        
+        GdkTexture *texture = gdk_memory_texture_new(width, height,
+            has_alpha ? GDK_MEMORY_R8G8B8A8 : GDK_MEMORY_R8G8B8,
+            bytes, stride);
+        g_bytes_unref(bytes);
+        gtk_image_set_from_paintable(GTK_IMAGE(widget), GDK_PAINTABLE(texture));
+        g_object_unref(texture);
     } else {
         gtk_image_clear(GTK_IMAGE(widget));
     }

@@ -13,6 +13,7 @@
 #include "chapterview.h"
 #include "transcriptview.h"
 #include "videoview.h"
+#include "models.h"
 
 typedef struct {
     GtkApplication *app;
@@ -27,10 +28,11 @@ typedef struct {
     GtkWidget *main_paned;      /* Sidebar | Content */
     GtkWidget *content_paned;   /* Browsers | Track list */
     
-    /* Sidebar with sources */
+    /* Sidebar with sources - GTK4 GListStore/GtkListView */
     GtkWidget *sidebar;
-    GtkWidget *sidebar_treeview;
+    GtkWidget *sidebar_listview;
     SourceManager *source_manager;
+    gulong source_selection_handler_id;
     
     /* Browser panels */
     GtkWidget *browser_container;
@@ -53,10 +55,11 @@ typedef struct {
     VideoView *video_view;
     GtkWidget *video_overlay_container;  /* Overlay container for video playback */
     
-    /* Main content area */
+    /* Main content area - GTK4 GListStore/GtkColumnView */
     GtkWidget *content_area;
-    GtkWidget *track_listview;
-    GListStore *track_store;
+    GtkWidget *track_listview;           /* GtkColumnView widget */
+    GListStore *track_store;             /* GListStore of BansheeTrackObject */
+    GtkSingleSelection *track_selection; /* Selection model for track list */
     
     /* Cover art */
     CoverArtManager *coverart_manager;
@@ -111,7 +114,7 @@ void ui_on_pause_clicked(GtkWidget *widget, gpointer user_data);
 void ui_on_stop_clicked(GtkWidget *widget, gpointer user_data);
 void ui_on_prev_clicked(GtkWidget *widget, gpointer user_data);
 void ui_on_next_clicked(GtkWidget *widget, gpointer user_data);
-void ui_on_track_selected(GtkTreeSelection *selection, gpointer user_data);
+void ui_on_track_selected(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data);
 
 /* Preferences dialog */
 void ui_show_preferences_dialog(MediaPlayerUI *ui);

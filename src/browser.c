@@ -1,12 +1,52 @@
 #include "browser.h"
+#include "models.h"
 #include <string.h>
 
-enum {
-    COL_BROWSER_ID = 0,
-    COL_BROWSER_NAME,
-    COL_BROWSER_COUNT,
-    NUM_BROWSER_COLS
-};
+/* Factory setup callback for name column */
+static void setup_name_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_name_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeBrowserItem *item = gtk_list_item_get_item(list_item);
+    if (item) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_browser_item_get_name(item));
+    }
+}
+
+/* Factory setup callback for count column */
+static void setup_count_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 1.0);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_count_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeBrowserItem *item = gtk_list_item_get_item(list_item);
+    if (item) {
+        gint count = banshee_browser_item_get_count(item);
+        if (count > 0) {
+            gchar *text = g_strdup_printf("%d", count);
+            gtk_label_set_text(GTK_LABEL(label), text);
+            g_free(text);
+        } else {
+            gtk_label_set_text(GTK_LABEL(label), "");
+        }
+    }
+}
 
 BrowserModel* browser_model_new(BrowserType type, Database *database) {
     BrowserModel *model = g_new0(BrowserModel, 1);
@@ -14,10 +54,8 @@ BrowserModel* browser_model_new(BrowserType type, Database *database) {
     model->database = database;
     model->current_filter = NULL;
     
-    model->store = gtk_list_store_new(NUM_BROWSER_COLS,
-                                       G_TYPE_INT,     /* ID */
-                                       G_TYPE_STRING,  /* Name */
-                                       G_TYPE_INT);    /* Count */
+    /* GTK4: Use GListStore with BansheeBrowserItem GObjects */
+    model->store = g_list_store_new(BANSHEE_TYPE_BROWSER_ITEM);
     
     browser_model_reload(model);
     return model;
@@ -35,15 +73,13 @@ void browser_model_free(BrowserModel *model) {
 void browser_model_reload(BrowserModel *model) {
     if (!model || !model->database) return;
     
-    gtk_list_store_clear(model->store);
+    /* Clear the store */
+    g_list_store_remove_all(model->store);
     
-    GtkTreeIter iter;
-    gtk_list_store_append(model->store, &iter);
-    gtk_list_store_set(model->store, &iter,
-                      COL_BROWSER_ID, 0,
-                      COL_BROWSER_NAME, "All",
-                      COL_BROWSER_COUNT, 0,
-                      -1);
+    /* Add "All" item first */
+    BansheeBrowserItem *all_item = banshee_browser_item_new(0, "All", 0);
+    g_list_store_append(model->store, all_item);
+    g_object_unref(all_item);
     
     const char *sql = NULL;
     switch (model->type) {
@@ -95,12 +131,9 @@ void browser_model_reload(BrowserModel *model) {
             const gchar *name = (const gchar *)sqlite3_column_text(stmt, 0);
             gint count = sqlite3_column_int(stmt, 1);
             
-            gtk_list_store_append(model->store, &iter);
-            gtk_list_store_set(model->store, &iter,
-                              COL_BROWSER_ID, g_str_hash(name),
-                              COL_BROWSER_NAME, name,
-                              COL_BROWSER_COUNT, count,
-                              -1);
+            BansheeBrowserItem *item = banshee_browser_item_new(g_str_hash(name), name, count);
+            g_list_store_append(model->store, item);
+            g_object_unref(item);
         }
         sqlite3_finalize(stmt);
     }
@@ -113,20 +146,32 @@ void browser_model_set_filter(BrowserModel *model, const gchar *filter) {
     browser_model_reload(model);
 }
 
-gchar* browser_model_get_selection(BrowserModel *model, GtkTreeSelection *selection) {
-    GtkTreeIter iter;
-    GtkTreeModel *tree_model;
+/* GTK4 compatible selection getter */
+gchar* browser_model_get_selected_name(BrowserModel *model, GtkSingleSelection *selection) {
+    (void)model;
+    if (!selection) return NULL;
     
-    if (gtk_tree_selection_get_selected(selection, &tree_model, &iter)) {
-        gchar *name;
-        gtk_tree_model_get(tree_model, &iter, COL_BROWSER_NAME, &name, -1);
-        
-        if (g_strcmp0(name, "All") == 0) {
-            g_free(name);
-            return NULL;
-        }
-        return name;
+    BansheeBrowserItem *item = gtk_single_selection_get_selected_item(selection);
+    if (!item) return NULL;
+    
+    const gchar *name = banshee_browser_item_get_name(item);
+    if (g_strcmp0(name, "All") == 0) {
+        return NULL;
     }
+    return g_strdup(name);
+}
+
+/* Legacy compatibility wrapper - now takes gpointer to work with both old and new code */
+gchar* browser_model_get_selection(BrowserModel *model, gpointer selection) {
+    /* In the new code, selection will be a GtkSingleSelection */
+    if (!selection) return NULL;
+    
+    /* Check if it's a GtkSingleSelection (GTK4) */
+    if (GTK_IS_SINGLE_SELECTION(selection)) {
+        return browser_model_get_selected_name(model, GTK_SINGLE_SELECTION(selection));
+    }
+    
+    /* Fallback - shouldn't happen in fully migrated code */
     return NULL;
 }
 
@@ -139,28 +184,47 @@ BrowserView* browser_view_new(BrowserModel *model) {
                                     GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_size_request(view->scrolled_window, 150, -1);
     
-    view->tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(model->store));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view->tree_view), TRUE);
+    /* GTK4: Create selection model wrapping the GListStore */
+    view->selection_model = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(model->store)));
+    gtk_single_selection_set_autoselect(view->selection_model, FALSE);
+    gtk_single_selection_set_can_unselect(view->selection_model, TRUE);
     
-    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
-    GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes(
-        "Name", renderer, "text", COL_BROWSER_NAME, NULL);
-    gtk_tree_view_column_set_expand(column, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->tree_view), column);
+    /* GTK4: Create GtkColumnView */
+    view->column_view = gtk_column_view_new(GTK_SELECTION_MODEL(view->selection_model));
+    gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(view->column_view), FALSE);
+    gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(view->column_view), FALSE);
     
-    renderer = gtk_cell_renderer_text_new();
-    g_object_set(renderer, "xalign", 1.0, NULL);
-    column = gtk_tree_view_column_new_with_attributes(
-        "#", renderer, "text", COL_BROWSER_COUNT, NULL);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->tree_view), column);
+    /* Name column */
+    GtkListItemFactory *name_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(name_factory, "setup", G_CALLBACK(setup_name_label), NULL);
+    g_signal_connect(name_factory, "bind", G_CALLBACK(bind_name_label), NULL);
     
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(view->scrolled_window), view->tree_view);
+    GtkColumnViewColumn *name_column = gtk_column_view_column_new("Name", name_factory);
+    gtk_column_view_column_set_expand(name_column, TRUE);
+    gtk_column_view_column_set_resizable(name_column, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->column_view), name_column);
+    g_object_unref(name_column);
+    
+    /* Count column */
+    GtkListItemFactory *count_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(count_factory, "setup", G_CALLBACK(setup_count_label), NULL);
+    g_signal_connect(count_factory, "bind", G_CALLBACK(bind_count_label), NULL);
+    
+    GtkColumnViewColumn *count_column = gtk_column_view_column_new("#", count_factory);
+    gtk_column_view_column_set_fixed_width(count_column, 50);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->column_view), count_column);
+    g_object_unref(count_column);
+    
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(view->scrolled_window), view->column_view);
     
     return view;
 }
 
 void browser_view_free(BrowserView *view) {
     if (!view) return;
+    if (view->selection_model && view->selection_handler_id > 0) {
+        g_signal_handler_disconnect(view->selection_model, view->selection_handler_id);
+    }
     g_free(view);
 }
 
@@ -169,12 +233,17 @@ void browser_view_set_selection_callback(BrowserView *view, GCallback callback, 
     view->selection_changed = callback;
     view->user_data = user_data;
     
-    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(view->tree_view));
-    g_signal_connect(selection, "changed", callback, user_data);
+    /* GTK4: Connect to selection model's "selection-changed" signal */
+    view->selection_handler_id = g_signal_connect(view->selection_model, "selection-changed", 
+                                                   callback, user_data);
 }
 
 GtkWidget* browser_view_get_widget(BrowserView *view) {
     return view ? view->scrolled_window : NULL;
+}
+
+GtkSingleSelection* browser_view_get_selection_model(BrowserView *view) {
+    return view ? view->selection_model : NULL;
 }
 
 GList* browser_get_artists(Database *db) {

@@ -329,7 +329,7 @@ static void on_video_widget_ready(GtkWidget *widget, gpointer user_data) {
     /* Check if we already have this widget embedded */
     if (view->video_widget == widget) {
         g_print("VideoView: Widget already embedded, just showing it\n");
-        gtk_widget_show(view->video_widget);
+        gtk_widget_set_visible(view->video_widget, TRUE);
         if (view->content_stack) {
             gtk_stack_set_visible_child_name(GTK_STACK(view->content_stack), "playback");
         }
@@ -452,55 +452,104 @@ static void stop_position_timer(VideoView *view) {
     }
 }
 
-static void on_video_row_activated(GtkTreeView *tree_view, GtkTreePath *path,
-                                   GtkTreeViewColumn *column, gpointer user_data) {
+/* GTK4: Video row activation handler for GtkColumnView */
+static void on_video_activated(GtkColumnView *column_view, guint position, gpointer user_data) {
     VideoView *view = (VideoView *)user_data;
-    (void)tree_view;
-    (void)column;
+    (void)column_view;
     
-    GtkTreeIter iter;
+    BansheeVideoObject *obj = g_list_model_get_item(G_LIST_MODEL(view->video_store), position);
+    if (!obj) return;
     
-    if (gtk_tree_model_get_iter(GTK_TREE_MODEL(view->video_store), &iter, path)) {
-        gint video_id;
-        gchar *file_path;
-        gchar *title;
+    gint video_id = banshee_video_object_get_id(obj);
+    const gchar *title = banshee_video_object_get_title(obj);
+    const gchar *file_path = banshee_video_object_get_file_path(obj);
+    
+    if (file_path && view->player) {
+        view->video_playing = TRUE;
         
-        gtk_tree_model_get(GTK_TREE_MODEL(view->video_store), &iter,
-                          VIDEO_COL_ID, &video_id,
-                          VIDEO_COL_TITLE, &title,
-                          VIDEO_COL_FILE_PATH, &file_path,
-                          -1);
-        
-        if (file_path && view->player) {
-            view->video_playing = TRUE;
-            
-            /* Set the video title in the controls */
-            if (view->video_title_label && title) {
-                gtk_label_set_text(GTK_LABEL(view->video_title_label), title);
-            }
-            
-            /* Update the header bar now playing label */
-            app_set_video_now_playing(title);
-            
-            /* Reset time label */
-            if (view->time_label) {
-                gtk_label_set_text(GTK_LABEL(view->time_label), "0:00 / 0:00");
-            }
-            
-            /* Register callback to be notified when gtksink widget is ready */
-            player_set_video_widget_ready_callback(view->player, 
-                                                   G_CALLBACK(on_video_widget_ready), 
-                                                   view);
-            
-            /* Set URI and start playback */
-            player_set_uri(view->player, file_path);
-            player_play(view->player);
-            
-            g_print("VideoView: Started video playback, waiting for widget...\n");
-            
-            g_free(file_path);
-            g_free(title);
+        /* Set the video title in the controls */
+        if (view->video_title_label && title) {
+            gtk_label_set_text(GTK_LABEL(view->video_title_label), title);
         }
+        
+        /* Update the header bar now playing label */
+        app_set_video_now_playing(title);
+        
+        /* Reset time label */
+        if (view->time_label) {
+            gtk_label_set_text(GTK_LABEL(view->time_label), "0:00 / 0:00");
+        }
+        
+        /* Register callback to be notified when gtksink widget is ready */
+        player_set_video_widget_ready_callback(view->player, 
+                                               G_CALLBACK(on_video_widget_ready), 
+                                               view);
+        
+        /* Set URI and start playback */
+        player_set_uri(view->player, file_path);
+        player_play(view->player);
+        
+        g_print("VideoView: Started video playback, waiting for widget...\n");
+    }
+    
+    (void)video_id;
+    g_object_unref(obj);
+}
+
+/* GTK4 Factory functions for video list columns */
+static void setup_video_title_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_video_title_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeVideoObject *obj = gtk_list_item_get_item(list_item);
+    if (obj) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_video_object_get_title(obj));
+    }
+}
+
+static void setup_video_artist_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_video_artist_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeVideoObject *obj = gtk_list_item_get_item(list_item);
+    if (obj) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_video_object_get_artist(obj));
+    }
+}
+
+static void setup_video_duration_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 1.0);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_video_duration_label(GtkListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory;
+    (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeVideoObject *obj = gtk_list_item_get_item(list_item);
+    if (obj) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_video_object_get_duration(obj));
     }
 }
 
@@ -519,60 +568,55 @@ VideoView* video_view_new(Database *database, MediaPlayer *player) {
     /* Create the video list page */
     GtkWidget *list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     
-    /* Create list store for videos */
-    view->video_store = gtk_list_store_new(VIDEO_COL_COUNT,
-                                           G_TYPE_INT,      /* ID */
-                                           G_TYPE_STRING,   /* Title */
-                                           G_TYPE_STRING,   /* Artist */
-                                           G_TYPE_STRING,   /* Duration */
-                                           G_TYPE_STRING);  /* File Path */
+    /* GTK4: Create GListStore for videos */
+    view->video_store = g_list_store_new(BANSHEE_TYPE_VIDEO_OBJECT);
     
-    /* Create tree view */
-    view->video_listview = gtk_tree_view_new_with_model(GTK_TREE_MODEL(view->video_store));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view->video_listview), TRUE);
-    gtk_tree_view_set_enable_search(GTK_TREE_VIEW(view->video_listview), TRUE);
-    gtk_tree_view_set_search_column(GTK_TREE_VIEW(view->video_listview), VIDEO_COL_TITLE);
+    /* Create selection model */
+    view->video_selection = gtk_single_selection_new(G_LIST_MODEL(view->video_store));
+    gtk_single_selection_set_autoselect(view->video_selection, FALSE);
     
-    /* Add columns */
-    GtkCellRenderer *renderer;
-    GtkTreeViewColumn *column;
+    /* Create GtkColumnView */
+    view->video_columnview = gtk_column_view_new(GTK_SELECTION_MODEL(view->video_selection));
+    gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(view->video_columnview), FALSE);
+    gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(view->video_columnview), FALSE);
+    gtk_column_view_set_reorderable(GTK_COLUMN_VIEW(view->video_columnview), FALSE);
     
     /* Title column */
-    renderer = gtk_cell_renderer_text_new();
-    column = gtk_tree_view_column_new_with_attributes("Title", renderer,
-                                                      "text", VIDEO_COL_TITLE,
-                                                      NULL);
-    gtk_tree_view_column_set_expand(column, TRUE);
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->video_listview), column);
+    GtkListItemFactory *title_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(title_factory, "setup", G_CALLBACK(setup_video_title_label), NULL);
+    g_signal_connect(title_factory, "bind", G_CALLBACK(bind_video_title_label), NULL);
+    GtkColumnViewColumn *title_column = gtk_column_view_column_new("Title", title_factory);
+    gtk_column_view_column_set_expand(title_column, TRUE);
+    gtk_column_view_column_set_resizable(title_column, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->video_columnview), title_column);
     
     /* Artist column */
-    renderer = gtk_cell_renderer_text_new();
-    column = gtk_tree_view_column_new_with_attributes("Artist", renderer,
-                                                      "text", VIDEO_COL_ARTIST,
-                                                      NULL);
-    gtk_tree_view_column_set_expand(column, TRUE);
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->video_listview), column);
+    GtkListItemFactory *artist_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(artist_factory, "setup", G_CALLBACK(setup_video_artist_label), NULL);
+    g_signal_connect(artist_factory, "bind", G_CALLBACK(bind_video_artist_label), NULL);
+    GtkColumnViewColumn *artist_column = gtk_column_view_column_new("Artist", artist_factory);
+    gtk_column_view_column_set_expand(artist_column, TRUE);
+    gtk_column_view_column_set_resizable(artist_column, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->video_columnview), artist_column);
     
     /* Duration column */
-    renderer = gtk_cell_renderer_text_new();
-    column = gtk_tree_view_column_new_with_attributes("Duration", renderer,
-                                                      "text", VIDEO_COL_DURATION,
-                                                      NULL);
-    gtk_tree_view_column_set_resizable(column, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view->video_listview), column);
+    GtkListItemFactory *duration_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(duration_factory, "setup", G_CALLBACK(setup_video_duration_label), NULL);
+    g_signal_connect(duration_factory, "bind", G_CALLBACK(bind_video_duration_label), NULL);
+    GtkColumnViewColumn *duration_column = gtk_column_view_column_new("Duration", duration_factory);
+    gtk_column_view_column_set_resizable(duration_column, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view->video_columnview), duration_column);
     
     /* Connect row activation signal (double-click) */
-    g_signal_connect(view->video_listview, "row-activated",
-                    G_CALLBACK(on_video_row_activated), view);
+    g_signal_connect(view->video_columnview, "activate",
+                    G_CALLBACK(on_video_activated), view);
     
     /* Scrolled window for video list */
     view->scrolled_window = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(view->scrolled_window),
                                   GTK_POLICY_AUTOMATIC,
                                   GTK_POLICY_AUTOMATIC);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(view->scrolled_window), view->video_listview);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(view->scrolled_window), view->video_columnview);
     
     gtk_widget_set_vexpand(view->scrolled_window, TRUE);
     gtk_box_append(GTK_BOX(list_box), view->scrolled_window);
@@ -621,6 +665,10 @@ void video_view_free(VideoView *view) {
         g_object_unref(view->video_store);
     }
     
+    if (view->video_selection) {
+        g_object_unref(view->video_selection);
+    }
+    
     g_free(view);
 }
 
@@ -630,7 +678,7 @@ GtkWidget* video_view_get_widget(VideoView *view) {
 
 void video_view_clear(VideoView *view) {
     if (!view || !view->video_store) return;
-    gtk_list_store_clear(view->video_store);
+    g_list_store_remove_all(view->video_store);
 }
 
 void video_view_load_videos(VideoView *view) {
@@ -644,19 +692,19 @@ void video_view_load_videos(VideoView *view) {
     
     for (GList *l = videos; l != NULL; l = l->next) {
         Track *video = (Track *)l->data;
-        GtkTreeIter iter;
         
         gchar duration_str[32];
         format_video_time(video->duration, duration_str, sizeof(duration_str));
         
-        gtk_list_store_append(view->video_store, &iter);
-        gtk_list_store_set(view->video_store, &iter,
-                          VIDEO_COL_ID, video->id,
-                          VIDEO_COL_TITLE, video->title ? video->title : "Unknown",
-                          VIDEO_COL_ARTIST, video->artist ? video->artist : "Unknown",
-                          VIDEO_COL_DURATION, duration_str,
-                          VIDEO_COL_FILE_PATH, video->file_path,
-                          -1);
+        BansheeVideoObject *obj = banshee_video_object_new(
+            video->id,
+            video->title ? video->title : "Unknown",
+            video->artist ? video->artist : "Unknown",
+            duration_str,
+            video->file_path ? video->file_path : ""
+        );
+        g_list_store_append(view->video_store, obj);
+        g_object_unref(obj);
     }
     
     g_list_free_full(videos, (GDestroyNotify)database_free_track);
@@ -706,7 +754,7 @@ void video_view_hide_video_ui(VideoView *view) {
     
     /* Hide the video widget */
     if (view->video_widget) {
-        gtk_widget_hide(view->video_widget);
+        gtk_widget_set_visible(view->video_widget, FALSE);
     }
     
     /* Switch back to video list */
@@ -727,5 +775,5 @@ void video_view_set_selection_callback(VideoView *view, VideoSelectedCallback ca
     data->callback = callback;
     data->user_data = user_data;
     
-    g_object_set_data_full(G_OBJECT(view->video_listview), "callback-data", data, g_free);
+    g_object_set_data_full(G_OBJECT(view->video_columnview), "callback-data", data, g_free);
 }

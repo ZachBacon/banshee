@@ -3,14 +3,16 @@
 
 #include <gtk/gtk.h>
 #include "podcast.h"
+#include "models.h"
 
 /* Callback for chapter seeking */
 typedef void (*ChapterSeekCallback)(gpointer user_data, gdouble time);
 
 typedef struct {
     GtkWidget *container;
-    GtkWidget *listview;
-    GtkListStore *store;
+    GtkWidget *columnview;
+    GListStore *store;
+    GtkSingleSelection *selection;
     
     GList *chapters;
     

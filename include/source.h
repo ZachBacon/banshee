@@ -3,6 +3,7 @@
 
 #include <gtk/gtk.h>
 #include "database.h"
+#include "models.h"
 
 /* Source types */
 typedef enum {
@@ -41,11 +42,13 @@ typedef struct _Source {
     gpointer user_data; /* Type-specific data */
 } Source;
 
-/* Source manager */
+/* Source manager - GTK4 version using GListStore and GtkTreeListModel */
 typedef struct {
     GList *sources;
     Source *active_source;
-    GtkTreeStore *tree_store;
+    GListStore *source_store;           /* Flat store of BansheeSourceObject */
+    GtkTreeListModel *tree_list_model;  /* For hierarchical display */
+    GtkSingleSelection *selection;      /* Selection model */
     Database *db;
 } SourceManager;
 
@@ -64,7 +67,12 @@ void source_manager_remove_source(SourceManager *manager, Source *source);
 void source_manager_populate(SourceManager *manager);
 Source* source_manager_get_active(SourceManager *manager);
 void source_manager_set_active(SourceManager *manager, Source *source);
-GtkTreeStore* source_manager_get_tree_store(SourceManager *manager);
+GListStore* source_manager_get_source_store(SourceManager *manager);
+GtkSelectionModel* source_manager_get_selection(SourceManager *manager);
+
+/* Sidebar creation - GTK4 version */
+GtkWidget* source_manager_create_sidebar(SourceManager *manager);
+Source* source_get_by_selection(SourceManager *manager);
 
 /* Default sources */
 void source_manager_add_default_sources(SourceManager *manager);

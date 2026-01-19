@@ -4,13 +4,16 @@
 #include <gtk/gtk.h>
 #include "database.h"
 #include "player.h"
+#include "models.h"
 
 typedef struct {
     GtkWidget *main_container;      /* Main container for video view */
     GtkWidget *video_list_box;      /* Container for video list */
     GtkWidget *video_overlay_box;   /* Container for video overlay */
-    GtkWidget *video_listview;      /* Tree view for video list */
-    GtkListStore *video_store;      /* Store for video list */
+    GtkWidget *video_columnview;    /* GtkColumnView for video list */
+    GListStore *video_store;        /* GListStore for video list */
+    GtkSingleSelection *video_selection; /* Selection model for video list */
+    gulong video_selection_handler_id; /* Handler ID for selection changes */
     GtkWidget *video_widget;        /* Drawing area for video */
     GtkWidget *video_controls;      /* Video controls overlay */
     GtkWidget *controls_revealer;   /* Revealer for showing/hiding controls */

@@ -26,12 +26,11 @@ static void format_time(gint seconds, gchar *buffer, gsize buffer_size) {
 }
 
 /* Forward declarations */
-static void on_source_selected(GtkTreeSelection *selection, gpointer user_data);
-static void on_browser_selection_changed(GtkTreeSelection *selection, gpointer user_data);
+static void on_source_selected(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data);
+static void on_browser_selection_changed(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data);
 static void ui_internal_update_track_list(MediaPlayerUI *ui);
 static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks);
 static void ui_show_radio_stations(MediaPlayerUI *ui);
-static void on_import_media_action(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 static void on_import_audio_action(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 static void on_import_video_action(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 static void on_search_changed(GtkSearchEntry *entry, gpointer user_data);
@@ -197,10 +196,10 @@ static GtkWidget* create_headerbar(MediaPlayerUI *ui) {
     gtk_widget_set_size_request(media_box, 450, -1);
     
     /* Cover art */
-    ui->header_cover_art = coverart_widget_new(32);
+    ui->header_cover_art = coverart_widget_new(64);
     gtk_widget_set_halign(ui->header_cover_art, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(ui->header_cover_art, GTK_ALIGN_CENTER);
-    gtk_widget_set_size_request(ui->header_cover_art, 32, 32);
+    gtk_widget_set_size_request(ui->header_cover_art, 64, 64);
     gtk_box_append(GTK_BOX(media_box), ui->header_cover_art);
     
     /* Progress and info container */
@@ -345,36 +344,18 @@ static void init_source_manager(MediaPlayerUI *ui) {
     ui->source_manager = source_manager_new(ui->database);
     source_manager_add_default_sources(ui->source_manager);
     
-    /* Create sidebar with source tree */
-    GtkWidget *scrolled = gtk_scrolled_window_new();
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
-                                  GTK_POLICY_AUTOMATIC,
-                                  GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_size_request(scrolled, 180, -1);
+    /* Create sidebar using source_manager's GTK4 API */
+    ui->sidebar = source_manager_create_sidebar(ui->source_manager);
+    gtk_widget_set_size_request(ui->sidebar, 180, -1);
     
-    ui->sidebar_treeview = gtk_tree_view_new_with_model(
-        GTK_TREE_MODEL(ui->source_manager->tree_store));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(ui->sidebar_treeview), FALSE);
+    /* Get the list view from the scrolled window for reference */
+    ui->sidebar_listview = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(ui->sidebar));
     
-    /* Icon column */
-    GtkCellRenderer *icon_renderer = gtk_cell_renderer_pixbuf_new();
-    GtkCellRenderer *text_renderer = gtk_cell_renderer_text_new();
-    
-    GtkTreeViewColumn *column = gtk_tree_view_column_new();
-    gtk_tree_view_column_pack_start(column, icon_renderer, FALSE);
-    gtk_tree_view_column_pack_start(column, text_renderer, TRUE);
-    gtk_tree_view_column_add_attribute(column, icon_renderer, "icon-name", 1);
-    gtk_tree_view_column_add_attribute(column, text_renderer, "text", 0);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(ui->sidebar_treeview), column);
-    
-    /* Connect selection signal */
-    GtkTreeSelection *selection = gtk_tree_view_get_selection(
-        GTK_TREE_VIEW(ui->sidebar_treeview));
-    gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
-    g_signal_connect(selection, "changed", G_CALLBACK(on_source_selected), ui);
-    
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), ui->sidebar_treeview);
-    ui->sidebar = scrolled;
+    /* Connect selection signal using GTK4 GtkSelectionModel */
+    GtkSelectionModel *selection = source_manager_get_selection(ui->source_manager);
+    ui->source_selection_handler_id = g_signal_connect(
+        selection, "selection-changed", 
+        G_CALLBACK(on_source_selected), ui);
 }
 
 static void init_browsers(MediaPlayerUI *ui) {
@@ -410,9 +391,10 @@ static void init_browsers(MediaPlayerUI *ui) {
 static void on_album_selected(const gchar *artist, const gchar *album, gpointer user_data) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
     
-    /* Block track selection signal while updating */
-    GtkTreeSelection *track_sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->track_listview));
-    g_signal_handler_block(track_sel, ui->track_selection_handler_id);
+    /* Block track selection signal while updating - GTK4: use track_selection */
+    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+        g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
+    }
     
     /* Filter tracks by album */
     GList *tracks = database_get_tracks_by_album(ui->database, artist, album);
@@ -420,7 +402,9 @@ static void on_album_selected(const gchar *artist, const gchar *album, gpointer 
     g_list_free_full(tracks, (GDestroyNotify)database_free_track);
     
     /* Unblock track selection signal */
-    g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
+    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+    }
 }
 
 static void on_funding_url_clicked(GtkWidget *button, gpointer user_data) {
@@ -495,63 +479,176 @@ static void on_podcast_episode_play(gpointer user_data, const gchar *uri, const 
     }
 }
 
+/* ============================================================================
+ * Track list column factories for GTK4 GtkColumnView
+ * ============================================================================ */
+
+static void setup_track_num_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 1.0);
+    gtk_widget_set_margin_start(label, 4);
+    gtk_widget_set_margin_end(label, 4);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_track_num_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    if (track) {
+        gint num = banshee_track_object_get_track_number(track);
+        gchar *text = g_strdup_printf("%d", num);
+        gtk_label_set_text(GTK_LABEL(label), text);
+        g_free(text);
+    }
+}
+
+static void setup_title_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_margin_start(label, 4);
+    gtk_widget_set_margin_end(label, 4);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_title_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    if (track) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_track_object_get_title(track));
+    }
+}
+
+static void setup_artist_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_margin_start(label, 4);
+    gtk_widget_set_margin_end(label, 4);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_artist_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    if (track) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_track_object_get_artist(track));
+    }
+}
+
+static void setup_album_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_margin_start(label, 4);
+    gtk_widget_set_margin_end(label, 4);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_album_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    if (track) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_track_object_get_album(track));
+    }
+}
+
+static void setup_duration_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(label), 1.0);
+    gtk_widget_set_margin_start(label, 4);
+    gtk_widget_set_margin_end(label, 4);
+    gtk_list_item_set_child(list_item, label);
+}
+
+static void bind_duration_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
+    (void)factory; (void)user_data;
+    GtkWidget *label = gtk_list_item_get_child(list_item);
+    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    if (track) {
+        gtk_label_set_text(GTK_LABEL(label), banshee_track_object_get_duration_str(track));
+    }
+}
+
 static GtkWidget* create_track_list(MediaPlayerUI *ui) {
     GtkWidget *scrolled = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                     GTK_POLICY_AUTOMATIC,
                                     GTK_POLICY_AUTOMATIC);
     
-    /* GTK4: Still using GtkListStore with GtkTreeView for compatibility */
-    GtkListStore *track_store = gtk_list_store_new(NUM_COLS,
-                                          G_TYPE_INT,     /* ID */
-                                          G_TYPE_INT,     /* Track # */
-                                          G_TYPE_STRING,  /* Title */
-                                          G_TYPE_STRING,  /* Artist */
-                                          G_TYPE_STRING,  /* Album */
-                                          G_TYPE_STRING); /* Duration */
+    /* GTK4: Use GListStore with BansheeTrackObject GObjects */
+    ui->track_store = g_list_store_new(BANSHEE_TYPE_TRACK_OBJECT);
     
-    /* Store reference - GTK4 GListStore is different, keep using GtkListStore */
-    ui->track_store = (gpointer)track_store;
+    /* Create selection model */
+    ui->track_selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(ui->track_store)));
+    gtk_single_selection_set_autoselect(ui->track_selection, FALSE);
+    gtk_single_selection_set_can_unselect(ui->track_selection, TRUE);
     
-    ui->track_listview = gtk_tree_view_new_with_model(GTK_TREE_MODEL(track_store));
-    g_object_unref(track_store);
+    /* Create GtkColumnView */
+    ui->track_listview = gtk_column_view_new(GTK_SELECTION_MODEL(ui->track_selection));
+    gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(ui->track_listview), FALSE);
+    gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(ui->track_listview), FALSE);
     
-    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    /* Track # column */
+    GtkListItemFactory *num_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(num_factory, "setup", G_CALLBACK(setup_track_num_label), NULL);
+    g_signal_connect(num_factory, "bind", G_CALLBACK(bind_track_num_label), NULL);
+    GtkColumnViewColumn *num_col = gtk_column_view_column_new("#", num_factory);
+    gtk_column_view_column_set_fixed_width(num_col, 50);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(ui->track_listview), num_col);
+    g_object_unref(num_col);
     
-    GtkTreeViewColumn *col_track_num = gtk_tree_view_column_new_with_attributes(
-        "#", renderer, "text", COL_TRACK_NUM, NULL);
-    gtk_tree_view_column_set_min_width(col_track_num, 40);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(ui->track_listview), col_track_num);
+    /* Title column */
+    GtkListItemFactory *title_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(title_factory, "setup", G_CALLBACK(setup_title_label), NULL);
+    g_signal_connect(title_factory, "bind", G_CALLBACK(bind_title_label), NULL);
+    GtkColumnViewColumn *title_col = gtk_column_view_column_new("Title", title_factory);
+    gtk_column_view_column_set_expand(title_col, TRUE);
+    gtk_column_view_column_set_resizable(title_col, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(ui->track_listview), title_col);
+    g_object_unref(title_col);
     
-    GtkTreeViewColumn *col_title = gtk_tree_view_column_new_with_attributes(
-        "Title", renderer, "text", COL_TITLE, NULL);
-    gtk_tree_view_column_set_resizable(col_title, TRUE);
-    gtk_tree_view_column_set_expand(col_title, TRUE);
-    gtk_tree_view_column_set_min_width(col_title, 200);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(ui->track_listview), col_title);
+    /* Artist column */
+    GtkListItemFactory *artist_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(artist_factory, "setup", G_CALLBACK(setup_artist_label), NULL);
+    g_signal_connect(artist_factory, "bind", G_CALLBACK(bind_artist_label), NULL);
+    GtkColumnViewColumn *artist_col = gtk_column_view_column_new("Artist", artist_factory);
+    gtk_column_view_column_set_expand(artist_col, TRUE);
+    gtk_column_view_column_set_resizable(artist_col, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(ui->track_listview), artist_col);
+    g_object_unref(artist_col);
     
-    GtkTreeViewColumn *col_artist = gtk_tree_view_column_new_with_attributes(
-        "Artist", renderer, "text", COL_ARTIST, NULL);
-    gtk_tree_view_column_set_resizable(col_artist, TRUE);
-    gtk_tree_view_column_set_expand(col_artist, TRUE);
-    gtk_tree_view_column_set_min_width(col_artist, 150);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(ui->track_listview), col_artist);
+    /* Album column */
+    GtkListItemFactory *album_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(album_factory, "setup", G_CALLBACK(setup_album_label), NULL);
+    g_signal_connect(album_factory, "bind", G_CALLBACK(bind_album_label), NULL);
+    GtkColumnViewColumn *album_col = gtk_column_view_column_new("Album", album_factory);
+    gtk_column_view_column_set_expand(album_col, TRUE);
+    gtk_column_view_column_set_resizable(album_col, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(ui->track_listview), album_col);
+    g_object_unref(album_col);
     
-    GtkTreeViewColumn *col_album = gtk_tree_view_column_new_with_attributes(
-        "Album", renderer, "text", COL_ALBUM, NULL);
-    gtk_tree_view_column_set_resizable(col_album, TRUE);
-    gtk_tree_view_column_set_expand(col_album, TRUE);
-    gtk_tree_view_column_set_min_width(col_album, 150);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(ui->track_listview), col_album);
+    /* Duration column */
+    GtkListItemFactory *duration_factory = gtk_signal_list_item_factory_new();
+    g_signal_connect(duration_factory, "setup", G_CALLBACK(setup_duration_label), NULL);
+    g_signal_connect(duration_factory, "bind", G_CALLBACK(bind_duration_label), NULL);
+    GtkColumnViewColumn *duration_col = gtk_column_view_column_new("Duration", duration_factory);
+    gtk_column_view_column_set_fixed_width(duration_col, 80);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(ui->track_listview), duration_col);
+    g_object_unref(duration_col);
     
-    GtkTreeViewColumn *col_duration = gtk_tree_view_column_new_with_attributes(
-        "Duration", renderer, "text", COL_DURATION, NULL);
-    gtk_tree_view_column_set_min_width(col_duration, 60);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(ui->track_listview), col_duration);
-    
-    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->track_listview));
-    gtk_tree_selection_set_mode(selection, GTK_SELECTION_SINGLE);
-    ui->track_selection_handler_id = g_signal_connect(selection, "changed", G_CALLBACK(ui_on_track_selected), ui);
+    /* Connect selection signal */
+    ui->track_selection_handler_id = g_signal_connect(ui->track_selection, "selection-changed", 
+                                                       G_CALLBACK(ui_on_track_selected), ui);
     
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), ui->track_listview);
     return scrolled;
@@ -604,9 +701,9 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
         if (!search_text || strlen(search_text) == 0) {
             /* No search - show all tracks based on current filter */
             if (active->type == SOURCE_TYPE_LIBRARY) {
-                /* Check if an artist is selected */
-                GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->artist_browser));
-                gchar *artist = browser_model_get_selection(ui->artist_model, selection);
+                /* Check if an artist is selected - use GTK4 selection model */
+                GtkSingleSelection *selection = browser_view_get_selection_model(ui->artist_browser);
+                gchar *artist = browser_model_get_selected_name(ui->artist_model, selection);
                 
                 if (artist && g_strcmp0(artist, "All Artists") != 0) {
                     GList *tracks = database_get_tracks_by_artist(ui->database, artist);
@@ -637,95 +734,103 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer user_data) {
     }
 }
 
-static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) {
+static void on_source_selected(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data) {
+    (void)position;
+    (void)n_items;
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
-    GtkTreeIter iter;
     
-    if (gtk_tree_selection_get_selected(selection, NULL, &iter)) {
-        Source *source = source_get_by_iter(ui->source_manager, &iter);
+    /* Get selected source using the new GTK4 API */
+    Source *source = source_get_by_selection(ui->source_manager);
+    
+    if (source) {
+        source_manager_set_active(ui->source_manager, source);
         
-        if (source) {
-            source_manager_set_active(ui->source_manager, source);
-            
-            /* Clear search entry when switching sources */
-            gtk_editable_set_text(GTK_EDITABLE(ui->search_entry), "");
-            
-            /* Get the content stack */
-            GtkStack *content_stack = GTK_STACK(g_object_get_data(G_OBJECT(ui->window), "content_stack"));
-            
-            /* Block track selection signal while updating list */
-            GtkTreeSelection *track_sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->track_listview));
-            g_signal_handler_block(track_sel, ui->track_selection_handler_id);
-            
-            /* Clear current track list */
-            gtk_list_store_clear(ui->track_store);
-            
-            switch (source->type) {
-                case SOURCE_TYPE_LIBRARY:
-                    /* Switch to music view */
-                    gtk_stack_set_visible_child_name(content_stack, "music");
-                    
-                    /* Update search placeholder */
-                    gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search library...");
-                    
-                    if (source->media_types & MEDIA_TYPE_VIDEO) {
-                        /* Video library - switch to video view */
-                        gtk_stack_set_visible_child_name(content_stack, "video");
-                        gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search videos...");
-                        video_view_load_videos(ui->video_view);
-                    } else {
-                        /* Music library with artist browser and album view */
-                        gtk_widget_set_visible(ui->browser_container, TRUE);
-                        gtk_widget_set_visible(ui->album_container, TRUE);
-                        browser_model_reload(ui->artist_model);
-                        album_view_set_artist(ui->album_view, NULL);
-                        ui_internal_update_track_list(ui);
-                    }
-                    /* Unblock signal after updating */
-                    g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
-                    break;
-                    
-                case SOURCE_TYPE_PLAYLIST: {
-                    /* Switch to music view */
-                    gtk_stack_set_visible_child_name(content_stack, "music");
-                    
-                    /* Update search placeholder */
-                    gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search playlist...");
-                    
-                    /* Hide browsers for playlists */
-                    gtk_widget_set_visible(ui->browser_container, FALSE);
-                    gtk_widget_set_visible(ui->album_container, FALSE);
-                    GList *tracks = database_get_playlist_tracks(ui->database, source->playlist_id);
+        /* Clear search entry when switching sources */
+        gtk_editable_set_text(GTK_EDITABLE(ui->search_entry), "");
+        
+        /* Get the content stack */
+        GtkStack *content_stack = GTK_STACK(g_object_get_data(G_OBJECT(ui->window), "content_stack"));
+        
+        /* Block track selection signal while updating list - GTK4 */
+        if (ui->track_selection && ui->track_selection_handler_id > 0) {
+            g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
+        }
+        
+        /* Clear current track list - GTK4: use g_list_store_remove_all */
+        g_list_store_remove_all(ui->track_store);
+        
+        switch (source->type) {
+            case SOURCE_TYPE_LIBRARY:
+                /* Switch to music view */
+                gtk_stack_set_visible_child_name(content_stack, "music");
+                
+                /* Update search placeholder */
+                gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search library...");
+                
+                if (source->media_types & MEDIA_TYPE_VIDEO) {
+                    /* Video library - switch to video view */
+                    gtk_stack_set_visible_child_name(content_stack, "video");
+                    gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search videos...");
+                    video_view_load_videos(ui->video_view);
+                } else {
+                    /* Music library with artist browser and album view */
+                    gtk_widget_set_visible(ui->browser_container, TRUE);
+                    gtk_widget_set_visible(ui->album_container, TRUE);
+                    browser_model_reload(ui->artist_model);
+                    album_view_set_artist(ui->album_view, NULL);
+                    ui_internal_update_track_list(ui);
+                }
+                /* Unblock signal after updating */
+                if (ui->track_selection && ui->track_selection_handler_id > 0) {
+                    g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+                }
+                break;
+                
+            case SOURCE_TYPE_PLAYLIST: {
+                /* Switch to music view */
+                gtk_stack_set_visible_child_name(content_stack, "music");
+                
+                /* Update search placeholder */
+                gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search playlist...");
+                
+                /* Hide browsers for playlists */
+                gtk_widget_set_visible(ui->browser_container, FALSE);
+                gtk_widget_set_visible(ui->album_container, FALSE);
+                GList *tracks = database_get_playlist_tracks(ui->database, source->playlist_id);
+                ui_update_track_list_with_tracks(ui, tracks);
+                g_list_free_full(tracks, (GDestroyNotify)database_free_track);
+                /* Unblock signal after updating */
+                if (ui->track_selection && ui->track_selection_handler_id > 0) {
+                    g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+                }
+                break;
+            }
+                
+            case SOURCE_TYPE_SMART_PLAYLIST: {
+                /* Switch to music view */
+                gtk_stack_set_visible_child_name(content_stack, "music");
+                
+                /* Update search placeholder */
+                gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search smart playlist...");
+                
+                gtk_widget_set_visible(ui->browser_container, FALSE);
+                gtk_widget_set_visible(ui->album_container, FALSE);
+                SmartPlaylist *sp = (SmartPlaylist *)source->user_data;
+                if (sp) {
+                    GList *tracks = smartplaylist_get_tracks(sp, ui->database);
                     ui_update_track_list_with_tracks(ui, tracks);
                     g_list_free_full(tracks, (GDestroyNotify)database_free_track);
-                    /* Unblock signal after updating */
-                    g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
-                    break;
                 }
-                    
-                case SOURCE_TYPE_SMART_PLAYLIST: {
-                    /* Switch to music view */
-                    gtk_stack_set_visible_child_name(content_stack, "music");
-                    
-                    /* Update search placeholder */
-                    gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search smart playlist...");
-                    
-                    gtk_widget_set_visible(ui->browser_container, FALSE);
-                    gtk_widget_set_visible(ui->album_container, FALSE);
-                    SmartPlaylist *sp = (SmartPlaylist *)source->user_data;
-                    if (sp) {
-                        GList *tracks = smartplaylist_get_tracks(sp, ui->database);
-                        ui_update_track_list_with_tracks(ui, tracks);
-                        g_list_free_full(tracks, (GDestroyNotify)database_free_track);
-                    }
-                    /* Unblock signal after updating */
-                    g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
-                    break;
+                /* Unblock signal after updating */
+                if (ui->track_selection && ui->track_selection_handler_id > 0) {
+                    g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
                 }
-                    
-                case SOURCE_TYPE_RADIO:
-                    /* Switch to music view and show radio stations */
-                    gtk_stack_set_visible_child_name(content_stack, "music");
+                break;
+            }
+                
+            case SOURCE_TYPE_RADIO:
+                /* Switch to music view and show radio stations */
+                gtk_stack_set_visible_child_name(content_stack, "music");
                     
                     /* Update search placeholder */
                     gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui->search_entry), "Search stations...");
@@ -734,7 +839,9 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     gtk_widget_set_visible(ui->album_container, FALSE);
                     ui_show_radio_stations(ui);
                     /* Unblock signal after updating */
-                    g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
+                    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+                        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+                    }
                     break;
                     
                 case SOURCE_TYPE_PODCAST:
@@ -747,7 +854,9 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     podcast_view_refresh_podcasts(ui->podcast_view);
                     
                     /* Unblock signal after updating */
-                    g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
+                    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+                        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+                    }
                     break;
                     
                 default:
@@ -757,38 +866,45 @@ static void on_source_selected(GtkTreeSelection *selection, gpointer user_data) 
                     gtk_widget_set_visible(ui->browser_container, FALSE);
                     gtk_widget_set_visible(ui->album_container, FALSE);
                     /* Unblock signal */
-                    g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
+                    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+                        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+                    }
                     break;
             }
         }
-    }
 }
 
-static void on_browser_selection_changed(GtkTreeSelection *selection, gpointer user_data) {
+static void on_browser_selection_changed(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data) {
+    (void)position;
+    (void)n_items;
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
     
-    /* Get the selected artist from the browser */
-    gchar *artist = browser_model_get_selection(ui->artist_model, selection);
+    /* Get the selected artist from the browser using GTK4 API */
+    GtkSingleSelection *single_sel = GTK_SINGLE_SELECTION(selection);
+    gchar *artist = browser_model_get_selected_name(ui->artist_model, single_sel);
     
     /* Update album view with this artist's albums */
-    album_view_set_artist(ui->album_view, artist && g_strcmp0(artist, "All Artists") != 0 ? artist : NULL);
+    album_view_set_artist(ui->album_view, artist);
     
-    /* Block track selection signal while updating */
-    GtkTreeSelection *track_sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->track_listview));
-    g_signal_handler_block(track_sel, ui->track_selection_handler_id);
+    /* Block track selection signal while updating - GTK4 */
+    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+        g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
+    }
     
-    if (artist && g_strcmp0(artist, "All Artists") != 0) {
+    if (artist) {
         /* Filter by artist */
         GList *tracks = database_get_tracks_by_artist(ui->database, artist);
         ui_update_track_list_with_tracks(ui, tracks);
         g_list_free_full(tracks, (GDestroyNotify)database_free_track);
     } else {
-        /* Show all tracks */
+        /* Show all tracks (NULL means "All" was selected) */
         ui_internal_update_track_list(ui);
     }
     
     /* Unblock track selection signal */
-    g_signal_handler_unblock(track_sel, ui->track_selection_handler_id);
+    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+    }
     
     g_free(artist);
 }
@@ -950,9 +1066,15 @@ static void ui_internal_update_track_list(MediaPlayerUI *ui) {
 }
 
 static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks) {
-    if (!ui) return;
+    if (!ui || !ui->track_store) return;
     
-    gtk_list_store_clear(ui->track_store);
+    /* Block selection signal while updating */
+    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+        g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
+    }
+    
+    /* GTK4: Use g_list_store_remove_all instead of gtk_list_store_clear */
+    g_list_store_remove_all(ui->track_store);
     
     for (GList *l = tracks; l != NULL; l = l->next) {
         Track *track = (Track *)l->data;
@@ -961,23 +1083,37 @@ static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks) {
         gchar time_str[16];
         format_time(track->duration, time_str, sizeof(time_str));
         
-        GtkTreeIter iter;
-        gtk_list_store_append(ui->track_store, &iter);
-        gtk_list_store_set(ui->track_store, &iter,
-                          COL_ID, track->id,
-                          COL_TRACK_NUM, track->track_number,
-                          COL_TITLE, track->title,
-                          COL_ARTIST, track->artist,
-                          COL_ALBUM, track->album,
-                          COL_DURATION, time_str,
-                          -1);
+        /* GTK4: Create a BansheeTrackObject and append to GListStore */
+        BansheeTrackObject *track_obj = banshee_track_object_new(
+            track->id,
+            track->track_number,
+            track->title,
+            track->artist,
+            track->album,
+            time_str,
+            track->duration,
+            track->file_path
+        );
+        g_list_store_append(ui->track_store, track_obj);
+        g_object_unref(track_obj);
+    }
+    
+    /* Unblock selection signal */
+    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
     }
 }
 
 void ui_show_radio_stations(MediaPlayerUI *ui) {
-    if (!ui) return;
+    if (!ui || !ui->track_store) return;
     
-    gtk_list_store_clear(ui->track_store);
+    /* Block selection signal while updating */
+    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+        g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
+    }
+    
+    /* GTK4: Use g_list_store_remove_all instead of gtk_list_store_clear */
+    g_list_store_remove_all(ui->track_store);
     
     GList *stations = radio_station_get_all(ui->database);
     if (!stations) {
@@ -995,89 +1131,98 @@ void ui_show_radio_stations(MediaPlayerUI *ui) {
         
         gchar *bitrate_str = g_strdup_printf("%d kbps", station->bitrate);
         
-        GtkTreeIter iter;
-        gtk_list_store_append(ui->track_store, &iter);
-        gtk_list_store_set(ui->track_store, &iter,
-                          COL_ID, station->id,
-                          COL_TRACK_NUM, station_num++,
-                          COL_TITLE, station->name,
-                          COL_ARTIST, station->genre ? station->genre : "Unknown",
-                          COL_ALBUM, bitrate_str,
-                          COL_DURATION, "",
-                          -1);
+        /* GTK4: Create a BansheeTrackObject for radio station */
+        BansheeTrackObject *track_obj = banshee_track_object_new(
+            station->id,
+            station_num++,
+            station->name,
+            station->genre ? station->genre : "Unknown",
+            bitrate_str,
+            "",  /* No duration for radio */
+            0,
+            station->url
+        );
+        g_list_store_append(ui->track_store, track_obj);
+        g_object_unref(track_obj);
         
         g_free(bitrate_str);
     }
     
     g_list_free_full(stations, (GDestroyNotify)radio_station_free);
+    
+    /* Unblock selection signal */
+    if (ui->track_selection && ui->track_selection_handler_id > 0) {
+        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+    }
 }
 
-void ui_on_track_selected(GtkTreeSelection *selection, gpointer user_data) {
+void ui_on_track_selected(GtkSelectionModel *selection, guint position, guint n_items, gpointer user_data) {
+    (void)position;
+    (void)n_items;
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
-    GtkTreeIter iter;
-    GtkTreeModel *model;
     
-    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
-        gint track_id;
-        gtk_tree_model_get(model, &iter, COL_ID, &track_id, -1);
-        
-        /* Hide video view if currently showing video (UI only, player will be reused) */
-        if (ui->video_view && video_view_is_showing_video(ui->video_view)) {
-            video_view_hide_video_ui(ui->video_view);
+    /* GTK4: Get selected item from GtkSingleSelection */
+    BansheeTrackObject *track_obj = gtk_single_selection_get_selected_item(GTK_SINGLE_SELECTION(selection));
+    if (!track_obj) return;
+    
+    gint track_id = banshee_track_object_get_id(track_obj);
+    
+    /* Hide video view if currently showing video (UI only, player will be reused) */
+    if (ui->video_view && video_view_is_showing_video(ui->video_view)) {
+        video_view_hide_video_ui(ui->video_view);
+    }
+    
+    /* Check if this is a radio station or a track */
+    Source *active_source = source_manager_get_active(ui->source_manager);
+    if (active_source && active_source->type == SOURCE_TYPE_RADIO) {
+        /* It's a radio station */
+        RadioStation *station = radio_station_load(track_id, ui->database);
+        if (station && station->url) {
+            player_set_uri(ui->player, station->url);
+            player_play(ui->player);
+            
+            gchar *label = g_strdup_printf("%s - %s", station->name ? station->name : "Radio",
+                                           station->genre ? station->genre : "Streaming");
+            gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
+            g_free(label);
+            
+            /* Update cover art for radio (typically no cover) */
+            ui_update_cover_art(ui, NULL, NULL, NULL);
+            
+            radio_station_free(station);
         }
-        
-        /* Check if this is a radio station or a track */
-        Source *active_source = source_manager_get_active(ui->source_manager);
-        if (active_source && active_source->type == SOURCE_TYPE_RADIO) {
-            /* It's a radio station */
-            RadioStation *station = radio_station_load(track_id, ui->database);
-            if (station && station->url) {
-                player_set_uri(ui->player, station->url);
-                player_play(ui->player);
-                
-                gchar *label = g_strdup_printf("%s - %s", station->name ? station->name : "Radio",
-                                               station->genre ? station->genre : "Streaming");
-                gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
-                g_free(label);
-                
-                /* Update cover art for radio (typically no cover) */
-                ui_update_cover_art(ui, NULL, NULL, NULL);
-                
-                radio_station_free(station);
+    } else {
+        /* It's a music track */
+        Track *track = database_get_track(ui->database, track_id);
+        if (track && track->file_path) {
+            /* Store current playlist for prev/next navigation */
+            if (ui->current_playlist) {
+                g_list_free_full(ui->current_playlist, (GDestroyNotify)database_free_track);
             }
-        } else {
-            /* It's a music track */
-            Track *track = database_get_track(ui->database, track_id);
-            if (track && track->file_path) {
-                /* Store current playlist for prev/next navigation */
-                if (ui->current_playlist) {
-                    g_list_free_full(ui->current_playlist, (GDestroyNotify)database_free_track);
+            ui->current_playlist = database_get_all_tracks(ui->database);
+            
+            /* Find the index of this track in the playlist */
+            ui->current_track_index = 0;
+            for (GList *l = ui->current_playlist; l != NULL; l = l->next) {
+                Track *t = (Track *)l->data;
+                if (t && t->id == track_id) {
+                    break;
                 }
-                ui->current_playlist = database_get_all_tracks(ui->database);
-                
-                /* Find the index of this track in the playlist */
-                ui->current_track_index = 0;
-                for (GList *l = ui->current_playlist; l != NULL; l = l->next) {
-                    Track *t = (Track *)l->data;
-                    if (t && t->id == track_id) {
-                        break;
-                    }
-                    ui->current_track_index++;
-                }
-                
-                player_set_uri(ui->player, track->file_path);
-                player_play(ui->player);
-                
-                gchar *label = g_strdup_printf("%s - %s", track->artist ? track->artist : "Unknown",
-                                               track->title ? track->title : "Unknown");
-                gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
-                g_free(label);
-                
-                /* Update cover art for this track */
-                ui_update_cover_art(ui, track->artist, track->album, NULL);
-                
-                database_free_track(track);
+                ui->current_track_index++;
             }
+            
+            player_set_uri(ui->player, track->file_path);
+            player_play(ui->player);
+            
+            gchar *label = g_strdup_printf("%s - %s", track->artist ? track->artist : "Unknown",
+                                           track->title ? track->title : "Unknown");
+            gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
+            g_free(label);
+            
+            /* Update cover art for this track */
+            ui_update_cover_art(ui, track->artist, track->album, NULL);
+            
+            database_free_track(track);
         }
     }
 }
@@ -1431,14 +1576,10 @@ void ui_update_now_playing(MediaPlayerUI *ui) {
         /* Radio station - no cover art typically */
         ui_update_cover_art(ui, NULL, NULL, NULL);
     } else {
-        /* Music track - get current selection */
-        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui->track_listview));
-        GtkTreeIter iter;
-        GtkTreeModel *model;
-        
-        if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
-            gint track_id;
-            gtk_tree_model_get(model, &iter, COL_ID, &track_id, -1);
+        /* Music track - get current selection using GTK4 */
+        BansheeTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
+        if (track_obj) {
+            gint track_id = banshee_track_object_get_id(track_obj);
             
             Track *track = database_get_track(ui->database, track_id);
             if (track) {
