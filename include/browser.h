@@ -23,7 +23,7 @@ typedef struct {
 
 /* Browser model - now uses GListStore */
 typedef struct {
-    GListStore *store;           /* GListStore of BansheeBrowserItem objects */
+    GListStore *store;           /* GListStore of ShriekBrowserItem objects */
     BrowserType type;
     Database *database;
     gchar *current_filter;

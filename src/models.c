@@ -2,10 +2,10 @@
 #include <string.h>
 
 /* ============================================================================
- * BansheeTrackObject Implementation
+ * ShriekTrackObject Implementation
  * ============================================================================ */
 
-struct _BansheeTrackObject {
+struct _ShriekTrackObject {
     GObject parent_instance;
     
     gint id;
@@ -35,10 +35,10 @@ enum {
 
 static GParamSpec *track_properties[TRACK_N_PROPERTIES] = { NULL, };
 
-G_DEFINE_TYPE(BansheeTrackObject, banshee_track_object, G_TYPE_OBJECT)
+G_DEFINE_TYPE(ShriekTrackObject, shriek_track_object, G_TYPE_OBJECT)
 
-static void banshee_track_object_finalize(GObject *object) {
-    BansheeTrackObject *self = BANSHEE_TRACK_OBJECT(object);
+static void shriek_track_object_finalize(GObject *object) {
+    ShriekTrackObject *self = SHRIEK_TRACK_OBJECT(object);
     
     g_free(self->title);
     g_free(self->artist);
@@ -46,12 +46,12 @@ static void banshee_track_object_finalize(GObject *object) {
     g_free(self->duration_str);
     g_free(self->file_path);
     
-    G_OBJECT_CLASS(banshee_track_object_parent_class)->finalize(object);
+    G_OBJECT_CLASS(shriek_track_object_parent_class)->finalize(object);
 }
 
-static void banshee_track_object_get_property(GObject *object, guint prop_id,
+static void shriek_track_object_get_property(GObject *object, guint prop_id,
                                                GValue *value, GParamSpec *pspec) {
-    BansheeTrackObject *self = BANSHEE_TRACK_OBJECT(object);
+    ShriekTrackObject *self = SHRIEK_TRACK_OBJECT(object);
     
     switch (prop_id) {
         case TRACK_PROP_ID:
@@ -86,9 +86,9 @@ static void banshee_track_object_get_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_track_object_set_property(GObject *object, guint prop_id,
+static void shriek_track_object_set_property(GObject *object, guint prop_id,
                                                const GValue *value, GParamSpec *pspec) {
-    BansheeTrackObject *self = BANSHEE_TRACK_OBJECT(object);
+    ShriekTrackObject *self = SHRIEK_TRACK_OBJECT(object);
     
     switch (prop_id) {
         case TRACK_PROP_ID:
@@ -128,12 +128,12 @@ static void banshee_track_object_set_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_track_object_class_init(BansheeTrackObjectClass *klass) {
+static void shriek_track_object_class_init(ShriekTrackObjectClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     
-    object_class->finalize = banshee_track_object_finalize;
-    object_class->get_property = banshee_track_object_get_property;
-    object_class->set_property = banshee_track_object_set_property;
+    object_class->finalize = shriek_track_object_finalize;
+    object_class->get_property = shriek_track_object_get_property;
+    object_class->set_property = shriek_track_object_set_property;
     
     track_properties[TRACK_PROP_ID] =
         g_param_spec_int("id", "ID", "Track database ID",
@@ -183,7 +183,7 @@ static void banshee_track_object_class_init(BansheeTrackObjectClass *klass) {
     g_object_class_install_properties(object_class, TRACK_N_PROPERTIES, track_properties);
 }
 
-static void banshee_track_object_init(BansheeTrackObject *self) {
+static void shriek_track_object_init(ShriekTrackObject *self) {
     self->id = 0;
     self->track_number = 0;
     self->title = NULL;
@@ -195,12 +195,12 @@ static void banshee_track_object_init(BansheeTrackObject *self) {
     self->play_count = 0;
 }
 
-BansheeTrackObject* banshee_track_object_new(gint id, gint track_number,
+ShriekTrackObject* shriek_track_object_new(gint id, gint track_number,
                                               const gchar *title, const gchar *artist,
                                               const gchar *album, const gchar *duration_str,
                                               gint duration_seconds, const gchar *file_path,
                                               gint play_count) {
-    return g_object_new(BANSHEE_TYPE_TRACK_OBJECT,
+    return g_object_new(SHRIEK_TYPE_TRACK_OBJECT,
                         "id", id,
                         "track-number", track_number,
                         "title", title,
@@ -213,56 +213,56 @@ BansheeTrackObject* banshee_track_object_new(gint id, gint track_number,
                         NULL);
 }
 
-gint banshee_track_object_get_id(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), 0);
+gint shriek_track_object_get_id(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), 0);
     return self->id;
 }
 
-gint banshee_track_object_get_track_number(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), 0);
+gint shriek_track_object_get_track_number(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), 0);
     return self->track_number;
 }
 
-const gchar* banshee_track_object_get_title(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), NULL);
+const gchar* shriek_track_object_get_title(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), NULL);
     return self->title;
 }
 
-const gchar* banshee_track_object_get_artist(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), NULL);
+const gchar* shriek_track_object_get_artist(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), NULL);
     return self->artist;
 }
 
-const gchar* banshee_track_object_get_album(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), NULL);
+const gchar* shriek_track_object_get_album(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), NULL);
     return self->album;
 }
 
-const gchar* banshee_track_object_get_duration_str(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), NULL);
+const gchar* shriek_track_object_get_duration_str(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), NULL);
     return self->duration_str;
 }
 
-gint banshee_track_object_get_duration_seconds(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), 0);
+gint shriek_track_object_get_duration_seconds(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), 0);
     return self->duration_seconds;
 }
 
-const gchar* banshee_track_object_get_file_path(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), NULL);
+const gchar* shriek_track_object_get_file_path(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), NULL);
     return self->file_path;
 }
 
-gint banshee_track_object_get_play_count(BansheeTrackObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_TRACK_OBJECT(self), 0);
+gint shriek_track_object_get_play_count(ShriekTrackObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_TRACK_OBJECT(self), 0);
     return self->play_count;
 }
 
 /* ============================================================================
- * BansheeBrowserItem Implementation
+ * ShriekBrowserItem Implementation
  * ============================================================================ */
 
-struct _BansheeBrowserItem {
+struct _ShriekBrowserItem {
     GObject parent_instance;
     
     gint id;
@@ -280,17 +280,17 @@ enum {
 
 static GParamSpec *browser_properties[BROWSER_N_PROPERTIES] = { NULL, };
 
-G_DEFINE_TYPE(BansheeBrowserItem, banshee_browser_item, G_TYPE_OBJECT)
+G_DEFINE_TYPE(ShriekBrowserItem, shriek_browser_item, G_TYPE_OBJECT)
 
-static void banshee_browser_item_finalize(GObject *object) {
-    BansheeBrowserItem *self = BANSHEE_BROWSER_ITEM(object);
+static void shriek_browser_item_finalize(GObject *object) {
+    ShriekBrowserItem *self = SHRIEK_BROWSER_ITEM(object);
     g_free(self->name);
-    G_OBJECT_CLASS(banshee_browser_item_parent_class)->finalize(object);
+    G_OBJECT_CLASS(shriek_browser_item_parent_class)->finalize(object);
 }
 
-static void banshee_browser_item_get_property(GObject *object, guint prop_id,
+static void shriek_browser_item_get_property(GObject *object, guint prop_id,
                                                GValue *value, GParamSpec *pspec) {
-    BansheeBrowserItem *self = BANSHEE_BROWSER_ITEM(object);
+    ShriekBrowserItem *self = SHRIEK_BROWSER_ITEM(object);
     
     switch (prop_id) {
         case BROWSER_PROP_ID:
@@ -307,9 +307,9 @@ static void banshee_browser_item_get_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_browser_item_set_property(GObject *object, guint prop_id,
+static void shriek_browser_item_set_property(GObject *object, guint prop_id,
                                                const GValue *value, GParamSpec *pspec) {
-    BansheeBrowserItem *self = BANSHEE_BROWSER_ITEM(object);
+    ShriekBrowserItem *self = SHRIEK_BROWSER_ITEM(object);
     
     switch (prop_id) {
         case BROWSER_PROP_ID:
@@ -327,12 +327,12 @@ static void banshee_browser_item_set_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_browser_item_class_init(BansheeBrowserItemClass *klass) {
+static void shriek_browser_item_class_init(ShriekBrowserItemClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     
-    object_class->finalize = banshee_browser_item_finalize;
-    object_class->get_property = banshee_browser_item_get_property;
-    object_class->set_property = banshee_browser_item_set_property;
+    object_class->finalize = shriek_browser_item_finalize;
+    object_class->get_property = shriek_browser_item_get_property;
+    object_class->set_property = shriek_browser_item_set_property;
     
     browser_properties[BROWSER_PROP_ID] =
         g_param_spec_int("id", "ID", "Item ID",
@@ -352,40 +352,40 @@ static void banshee_browser_item_class_init(BansheeBrowserItemClass *klass) {
     g_object_class_install_properties(object_class, BROWSER_N_PROPERTIES, browser_properties);
 }
 
-static void banshee_browser_item_init(BansheeBrowserItem *self) {
+static void shriek_browser_item_init(ShriekBrowserItem *self) {
     self->id = 0;
     self->name = NULL;
     self->count = 0;
 }
 
-BansheeBrowserItem* banshee_browser_item_new(gint id, const gchar *name, gint count) {
-    return g_object_new(BANSHEE_TYPE_BROWSER_ITEM,
+ShriekBrowserItem* shriek_browser_item_new(gint id, const gchar *name, gint count) {
+    return g_object_new(SHRIEK_TYPE_BROWSER_ITEM,
                         "id", id,
                         "name", name,
                         "count", count,
                         NULL);
 }
 
-gint banshee_browser_item_get_id(BansheeBrowserItem *self) {
-    g_return_val_if_fail(BANSHEE_IS_BROWSER_ITEM(self), 0);
+gint shriek_browser_item_get_id(ShriekBrowserItem *self) {
+    g_return_val_if_fail(SHRIEK_IS_BROWSER_ITEM(self), 0);
     return self->id;
 }
 
-const gchar* banshee_browser_item_get_name(BansheeBrowserItem *self) {
-    g_return_val_if_fail(BANSHEE_IS_BROWSER_ITEM(self), NULL);
+const gchar* shriek_browser_item_get_name(ShriekBrowserItem *self) {
+    g_return_val_if_fail(SHRIEK_IS_BROWSER_ITEM(self), NULL);
     return self->name;
 }
 
-gint banshee_browser_item_get_count(BansheeBrowserItem *self) {
-    g_return_val_if_fail(BANSHEE_IS_BROWSER_ITEM(self), 0);
+gint shriek_browser_item_get_count(ShriekBrowserItem *self) {
+    g_return_val_if_fail(SHRIEK_IS_BROWSER_ITEM(self), 0);
     return self->count;
 }
 
 /* ============================================================================
- * BansheeSourceObject Implementation
+ * ShriekSourceObject Implementation
  * ============================================================================ */
 
-struct _BansheeSourceObject {
+struct _ShriekSourceObject {
     GObject parent_instance;
     
     gchar *name;
@@ -404,19 +404,19 @@ enum {
 
 static GParamSpec *source_properties[SOURCE_N_PROPERTIES] = { NULL, };
 
-G_DEFINE_TYPE(BansheeSourceObject, banshee_source_object, G_TYPE_OBJECT)
+G_DEFINE_TYPE(ShriekSourceObject, shriek_source_object, G_TYPE_OBJECT)
 
-static void banshee_source_object_finalize(GObject *object) {
-    BansheeSourceObject *self = BANSHEE_SOURCE_OBJECT(object);
+static void shriek_source_object_finalize(GObject *object) {
+    ShriekSourceObject *self = SHRIEK_SOURCE_OBJECT(object);
     g_free(self->name);
     g_free(self->icon_name);
     g_clear_object(&self->children);
-    G_OBJECT_CLASS(banshee_source_object_parent_class)->finalize(object);
+    G_OBJECT_CLASS(shriek_source_object_parent_class)->finalize(object);
 }
 
-static void banshee_source_object_get_property(GObject *object, guint prop_id,
+static void shriek_source_object_get_property(GObject *object, guint prop_id,
                                                 GValue *value, GParamSpec *pspec) {
-    BansheeSourceObject *self = BANSHEE_SOURCE_OBJECT(object);
+    ShriekSourceObject *self = SHRIEK_SOURCE_OBJECT(object);
     
     switch (prop_id) {
         case SOURCE_PROP_NAME:
@@ -433,9 +433,9 @@ static void banshee_source_object_get_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_source_object_set_property(GObject *object, guint prop_id,
+static void shriek_source_object_set_property(GObject *object, guint prop_id,
                                                 const GValue *value, GParamSpec *pspec) {
-    BansheeSourceObject *self = BANSHEE_SOURCE_OBJECT(object);
+    ShriekSourceObject *self = SHRIEK_SOURCE_OBJECT(object);
     
     switch (prop_id) {
         case SOURCE_PROP_NAME:
@@ -454,12 +454,12 @@ static void banshee_source_object_set_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_source_object_class_init(BansheeSourceObjectClass *klass) {
+static void shriek_source_object_class_init(ShriekSourceObjectClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     
-    object_class->finalize = banshee_source_object_finalize;
-    object_class->get_property = banshee_source_object_get_property;
-    object_class->set_property = banshee_source_object_set_property;
+    object_class->finalize = shriek_source_object_finalize;
+    object_class->get_property = shriek_source_object_get_property;
+    object_class->set_property = shriek_source_object_set_property;
     
     source_properties[SOURCE_PROP_NAME] =
         g_param_spec_string("name", "Name", "Source name",
@@ -478,53 +478,53 @@ static void banshee_source_object_class_init(BansheeSourceObjectClass *klass) {
     g_object_class_install_properties(object_class, SOURCE_N_PROPERTIES, source_properties);
 }
 
-static void banshee_source_object_init(BansheeSourceObject *self) {
+static void shriek_source_object_init(ShriekSourceObject *self) {
     self->name = NULL;
     self->icon_name = NULL;
     self->source_ptr = NULL;
-    self->children = g_list_store_new(BANSHEE_TYPE_SOURCE_OBJECT);
+    self->children = g_list_store_new(SHRIEK_TYPE_SOURCE_OBJECT);
 }
 
-BansheeSourceObject* banshee_source_object_new(const gchar *name, const gchar *icon_name,
+ShriekSourceObject* shriek_source_object_new(const gchar *name, const gchar *icon_name,
                                                 gpointer source_ptr) {
-    return g_object_new(BANSHEE_TYPE_SOURCE_OBJECT,
+    return g_object_new(SHRIEK_TYPE_SOURCE_OBJECT,
                         "name", name,
                         "icon-name", icon_name,
                         "source-ptr", source_ptr,
                         NULL);
 }
 
-const gchar* banshee_source_object_get_name(BansheeSourceObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_SOURCE_OBJECT(self), NULL);
+const gchar* shriek_source_object_get_name(ShriekSourceObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_SOURCE_OBJECT(self), NULL);
     return self->name;
 }
 
-const gchar* banshee_source_object_get_icon_name(BansheeSourceObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_SOURCE_OBJECT(self), NULL);
+const gchar* shriek_source_object_get_icon_name(ShriekSourceObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_SOURCE_OBJECT(self), NULL);
     return self->icon_name;
 }
 
-gpointer banshee_source_object_get_source(BansheeSourceObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_SOURCE_OBJECT(self), NULL);
+gpointer shriek_source_object_get_source(ShriekSourceObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_SOURCE_OBJECT(self), NULL);
     return self->source_ptr;
 }
 
-GListModel* banshee_source_object_get_children(BansheeSourceObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_SOURCE_OBJECT(self), NULL);
+GListModel* shriek_source_object_get_children(ShriekSourceObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_SOURCE_OBJECT(self), NULL);
     return G_LIST_MODEL(self->children);
 }
 
-void banshee_source_object_add_child(BansheeSourceObject *self, BansheeSourceObject *child) {
-    g_return_if_fail(BANSHEE_IS_SOURCE_OBJECT(self));
-    g_return_if_fail(BANSHEE_IS_SOURCE_OBJECT(child));
+void shriek_source_object_add_child(ShriekSourceObject *self, ShriekSourceObject *child) {
+    g_return_if_fail(SHRIEK_IS_SOURCE_OBJECT(self));
+    g_return_if_fail(SHRIEK_IS_SOURCE_OBJECT(child));
     g_list_store_append(self->children, child);
 }
 
 /* ============================================================================
- * BansheePodcastObject Implementation
+ * ShriekPodcastObject Implementation
  * ============================================================================ */
 
-struct _BansheePodcastObject {
+struct _ShriekPodcastObject {
     GObject parent_instance;
     
     gint id;
@@ -542,18 +542,18 @@ enum {
 
 static GParamSpec *podcast_properties[PODCAST_N_PROPERTIES] = { NULL, };
 
-G_DEFINE_TYPE(BansheePodcastObject, banshee_podcast_object, G_TYPE_OBJECT)
+G_DEFINE_TYPE(ShriekPodcastObject, shriek_podcast_object, G_TYPE_OBJECT)
 
-static void banshee_podcast_object_finalize(GObject *object) {
-    BansheePodcastObject *self = BANSHEE_PODCAST_OBJECT(object);
+static void shriek_podcast_object_finalize(GObject *object) {
+    ShriekPodcastObject *self = SHRIEK_PODCAST_OBJECT(object);
     g_free(self->title);
     g_free(self->author);
-    G_OBJECT_CLASS(banshee_podcast_object_parent_class)->finalize(object);
+    G_OBJECT_CLASS(shriek_podcast_object_parent_class)->finalize(object);
 }
 
-static void banshee_podcast_object_get_property(GObject *object, guint prop_id,
+static void shriek_podcast_object_get_property(GObject *object, guint prop_id,
                                                  GValue *value, GParamSpec *pspec) {
-    BansheePodcastObject *self = BANSHEE_PODCAST_OBJECT(object);
+    ShriekPodcastObject *self = SHRIEK_PODCAST_OBJECT(object);
     
     switch (prop_id) {
         case PODCAST_PROP_ID:
@@ -570,9 +570,9 @@ static void banshee_podcast_object_get_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_podcast_object_set_property(GObject *object, guint prop_id,
+static void shriek_podcast_object_set_property(GObject *object, guint prop_id,
                                                  const GValue *value, GParamSpec *pspec) {
-    BansheePodcastObject *self = BANSHEE_PODCAST_OBJECT(object);
+    ShriekPodcastObject *self = SHRIEK_PODCAST_OBJECT(object);
     
     switch (prop_id) {
         case PODCAST_PROP_ID:
@@ -591,12 +591,12 @@ static void banshee_podcast_object_set_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_podcast_object_class_init(BansheePodcastObjectClass *klass) {
+static void shriek_podcast_object_class_init(ShriekPodcastObjectClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     
-    object_class->finalize = banshee_podcast_object_finalize;
-    object_class->get_property = banshee_podcast_object_get_property;
-    object_class->set_property = banshee_podcast_object_set_property;
+    object_class->finalize = shriek_podcast_object_finalize;
+    object_class->get_property = shriek_podcast_object_get_property;
+    object_class->set_property = shriek_podcast_object_set_property;
     
     podcast_properties[PODCAST_PROP_ID] =
         g_param_spec_int("id", "ID", "Podcast ID",
@@ -616,40 +616,40 @@ static void banshee_podcast_object_class_init(BansheePodcastObjectClass *klass) 
     g_object_class_install_properties(object_class, PODCAST_N_PROPERTIES, podcast_properties);
 }
 
-static void banshee_podcast_object_init(BansheePodcastObject *self) {
+static void shriek_podcast_object_init(ShriekPodcastObject *self) {
     self->id = 0;
     self->title = NULL;
     self->author = NULL;
 }
 
-BansheePodcastObject* banshee_podcast_object_new(gint id, const gchar *title, const gchar *author) {
-    return g_object_new(BANSHEE_TYPE_PODCAST_OBJECT,
+ShriekPodcastObject* shriek_podcast_object_new(gint id, const gchar *title, const gchar *author) {
+    return g_object_new(SHRIEK_TYPE_PODCAST_OBJECT,
                         "id", id,
                         "title", title,
                         "author", author,
                         NULL);
 }
 
-gint banshee_podcast_object_get_id(BansheePodcastObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_PODCAST_OBJECT(self), 0);
+gint shriek_podcast_object_get_id(ShriekPodcastObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_PODCAST_OBJECT(self), 0);
     return self->id;
 }
 
-const gchar* banshee_podcast_object_get_title(BansheePodcastObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_PODCAST_OBJECT(self), NULL);
+const gchar* shriek_podcast_object_get_title(ShriekPodcastObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_PODCAST_OBJECT(self), NULL);
     return self->title;
 }
 
-const gchar* banshee_podcast_object_get_author(BansheePodcastObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_PODCAST_OBJECT(self), NULL);
+const gchar* shriek_podcast_object_get_author(ShriekPodcastObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_PODCAST_OBJECT(self), NULL);
     return self->author;
 }
 
 /* ============================================================================
- * BansheeEpisodeObject Implementation
+ * ShriekEpisodeObject Implementation
  * ============================================================================ */
 
-struct _BansheeEpisodeObject {
+struct _ShriekEpisodeObject {
     GObject parent_instance;
     
     gint id;
@@ -671,19 +671,19 @@ enum {
 
 static GParamSpec *episode_properties[EPISODE_N_PROPERTIES] = { NULL, };
 
-G_DEFINE_TYPE(BansheeEpisodeObject, banshee_episode_object, G_TYPE_OBJECT)
+G_DEFINE_TYPE(ShriekEpisodeObject, shriek_episode_object, G_TYPE_OBJECT)
 
-static void banshee_episode_object_finalize(GObject *object) {
-    BansheeEpisodeObject *self = BANSHEE_EPISODE_OBJECT(object);
+static void shriek_episode_object_finalize(GObject *object) {
+    ShriekEpisodeObject *self = SHRIEK_EPISODE_OBJECT(object);
     g_free(self->title);
     g_free(self->date);
     g_free(self->duration);
-    G_OBJECT_CLASS(banshee_episode_object_parent_class)->finalize(object);
+    G_OBJECT_CLASS(shriek_episode_object_parent_class)->finalize(object);
 }
 
-static void banshee_episode_object_get_property(GObject *object, guint prop_id,
+static void shriek_episode_object_get_property(GObject *object, guint prop_id,
                                                  GValue *value, GParamSpec *pspec) {
-    BansheeEpisodeObject *self = BANSHEE_EPISODE_OBJECT(object);
+    ShriekEpisodeObject *self = SHRIEK_EPISODE_OBJECT(object);
     
     switch (prop_id) {
         case EPISODE_PROP_ID:
@@ -706,9 +706,9 @@ static void banshee_episode_object_get_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_episode_object_set_property(GObject *object, guint prop_id,
+static void shriek_episode_object_set_property(GObject *object, guint prop_id,
                                                  const GValue *value, GParamSpec *pspec) {
-    BansheeEpisodeObject *self = BANSHEE_EPISODE_OBJECT(object);
+    ShriekEpisodeObject *self = SHRIEK_EPISODE_OBJECT(object);
     
     switch (prop_id) {
         case EPISODE_PROP_ID:
@@ -734,12 +734,12 @@ static void banshee_episode_object_set_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_episode_object_class_init(BansheeEpisodeObjectClass *klass) {
+static void shriek_episode_object_class_init(ShriekEpisodeObjectClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     
-    object_class->finalize = banshee_episode_object_finalize;
-    object_class->get_property = banshee_episode_object_get_property;
-    object_class->set_property = banshee_episode_object_set_property;
+    object_class->finalize = shriek_episode_object_finalize;
+    object_class->get_property = shriek_episode_object_get_property;
+    object_class->set_property = shriek_episode_object_set_property;
     
     episode_properties[EPISODE_PROP_ID] =
         g_param_spec_int("id", "ID", "Episode ID",
@@ -769,7 +769,7 @@ static void banshee_episode_object_class_init(BansheeEpisodeObjectClass *klass) 
     g_object_class_install_properties(object_class, EPISODE_N_PROPERTIES, episode_properties);
 }
 
-static void banshee_episode_object_init(BansheeEpisodeObject *self) {
+static void shriek_episode_object_init(ShriekEpisodeObject *self) {
     self->id = 0;
     self->title = NULL;
     self->date = NULL;
@@ -777,10 +777,10 @@ static void banshee_episode_object_init(BansheeEpisodeObject *self) {
     self->downloaded = FALSE;
 }
 
-BansheeEpisodeObject* banshee_episode_object_new(gint id, const gchar *title,
+ShriekEpisodeObject* shriek_episode_object_new(gint id, const gchar *title,
                                                   const gchar *date, const gchar *duration,
                                                   gboolean downloaded) {
-    return g_object_new(BANSHEE_TYPE_EPISODE_OBJECT,
+    return g_object_new(SHRIEK_TYPE_EPISODE_OBJECT,
                         "id", id,
                         "title", title,
                         "date", date,
@@ -789,36 +789,36 @@ BansheeEpisodeObject* banshee_episode_object_new(gint id, const gchar *title,
                         NULL);
 }
 
-gint banshee_episode_object_get_id(BansheeEpisodeObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_EPISODE_OBJECT(self), 0);
+gint shriek_episode_object_get_id(ShriekEpisodeObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_EPISODE_OBJECT(self), 0);
     return self->id;
 }
 
-const gchar* banshee_episode_object_get_title(BansheeEpisodeObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_EPISODE_OBJECT(self), NULL);
+const gchar* shriek_episode_object_get_title(ShriekEpisodeObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_EPISODE_OBJECT(self), NULL);
     return self->title;
 }
 
-const gchar* banshee_episode_object_get_date(BansheeEpisodeObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_EPISODE_OBJECT(self), NULL);
+const gchar* shriek_episode_object_get_date(ShriekEpisodeObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_EPISODE_OBJECT(self), NULL);
     return self->date;
 }
 
-const gchar* banshee_episode_object_get_duration(BansheeEpisodeObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_EPISODE_OBJECT(self), NULL);
+const gchar* shriek_episode_object_get_duration(ShriekEpisodeObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_EPISODE_OBJECT(self), NULL);
     return self->duration;
 }
 
-gboolean banshee_episode_object_get_downloaded(BansheeEpisodeObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_EPISODE_OBJECT(self), FALSE);
+gboolean shriek_episode_object_get_downloaded(ShriekEpisodeObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_EPISODE_OBJECT(self), FALSE);
     return self->downloaded;
 }
 
 /* ============================================================================
- * BansheeVideoObject Implementation
+ * ShriekVideoObject Implementation
  * ============================================================================ */
 
-struct _BansheeVideoObject {
+struct _ShriekVideoObject {
     GObject parent_instance;
     
     gint id;
@@ -840,20 +840,20 @@ enum {
 
 static GParamSpec *video_properties[VIDEO_N_PROPERTIES] = { NULL, };
 
-G_DEFINE_TYPE(BansheeVideoObject, banshee_video_object, G_TYPE_OBJECT)
+G_DEFINE_TYPE(ShriekVideoObject, shriek_video_object, G_TYPE_OBJECT)
 
-static void banshee_video_object_finalize(GObject *object) {
-    BansheeVideoObject *self = BANSHEE_VIDEO_OBJECT(object);
+static void shriek_video_object_finalize(GObject *object) {
+    ShriekVideoObject *self = SHRIEK_VIDEO_OBJECT(object);
     g_free(self->title);
     g_free(self->artist);
     g_free(self->duration);
     g_free(self->file_path);
-    G_OBJECT_CLASS(banshee_video_object_parent_class)->finalize(object);
+    G_OBJECT_CLASS(shriek_video_object_parent_class)->finalize(object);
 }
 
-static void banshee_video_object_get_property(GObject *object, guint prop_id,
+static void shriek_video_object_get_property(GObject *object, guint prop_id,
                                                GValue *value, GParamSpec *pspec) {
-    BansheeVideoObject *self = BANSHEE_VIDEO_OBJECT(object);
+    ShriekVideoObject *self = SHRIEK_VIDEO_OBJECT(object);
     
     switch (prop_id) {
         case VIDEO_PROP_ID:
@@ -876,9 +876,9 @@ static void banshee_video_object_get_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_video_object_set_property(GObject *object, guint prop_id,
+static void shriek_video_object_set_property(GObject *object, guint prop_id,
                                                const GValue *value, GParamSpec *pspec) {
-    BansheeVideoObject *self = BANSHEE_VIDEO_OBJECT(object);
+    ShriekVideoObject *self = SHRIEK_VIDEO_OBJECT(object);
     
     switch (prop_id) {
         case VIDEO_PROP_ID:
@@ -905,12 +905,12 @@ static void banshee_video_object_set_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_video_object_class_init(BansheeVideoObjectClass *klass) {
+static void shriek_video_object_class_init(ShriekVideoObjectClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     
-    object_class->finalize = banshee_video_object_finalize;
-    object_class->get_property = banshee_video_object_get_property;
-    object_class->set_property = banshee_video_object_set_property;
+    object_class->finalize = shriek_video_object_finalize;
+    object_class->get_property = shriek_video_object_get_property;
+    object_class->set_property = shriek_video_object_set_property;
     
     video_properties[VIDEO_PROP_ID] =
         g_param_spec_int("id", "ID", "Video ID",
@@ -940,7 +940,7 @@ static void banshee_video_object_class_init(BansheeVideoObjectClass *klass) {
     g_object_class_install_properties(object_class, VIDEO_N_PROPERTIES, video_properties);
 }
 
-static void banshee_video_object_init(BansheeVideoObject *self) {
+static void shriek_video_object_init(ShriekVideoObject *self) {
     self->id = 0;
     self->title = NULL;
     self->artist = NULL;
@@ -948,10 +948,10 @@ static void banshee_video_object_init(BansheeVideoObject *self) {
     self->file_path = NULL;
 }
 
-BansheeVideoObject* banshee_video_object_new(gint id, const gchar *title,
+ShriekVideoObject* shriek_video_object_new(gint id, const gchar *title,
                                               const gchar *artist, const gchar *duration,
                                               const gchar *file_path) {
-    return g_object_new(BANSHEE_TYPE_VIDEO_OBJECT,
+    return g_object_new(SHRIEK_TYPE_VIDEO_OBJECT,
                         "id", id,
                         "title", title,
                         "artist", artist,
@@ -960,36 +960,36 @@ BansheeVideoObject* banshee_video_object_new(gint id, const gchar *title,
                         NULL);
 }
 
-gint banshee_video_object_get_id(BansheeVideoObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_VIDEO_OBJECT(self), 0);
+gint shriek_video_object_get_id(ShriekVideoObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_VIDEO_OBJECT(self), 0);
     return self->id;
 }
 
-const gchar* banshee_video_object_get_title(BansheeVideoObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_VIDEO_OBJECT(self), NULL);
+const gchar* shriek_video_object_get_title(ShriekVideoObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_VIDEO_OBJECT(self), NULL);
     return self->title;
 }
 
-const gchar* banshee_video_object_get_artist(BansheeVideoObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_VIDEO_OBJECT(self), NULL);
+const gchar* shriek_video_object_get_artist(ShriekVideoObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_VIDEO_OBJECT(self), NULL);
     return self->artist;
 }
 
-const gchar* banshee_video_object_get_duration(BansheeVideoObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_VIDEO_OBJECT(self), NULL);
+const gchar* shriek_video_object_get_duration(ShriekVideoObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_VIDEO_OBJECT(self), NULL);
     return self->duration;
 }
 
-const gchar* banshee_video_object_get_file_path(BansheeVideoObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_VIDEO_OBJECT(self), NULL);
+const gchar* shriek_video_object_get_file_path(ShriekVideoObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_VIDEO_OBJECT(self), NULL);
     return self->file_path;
 }
 
 /* ============================================================================
- * BansheeChapterObject Implementation
+ * ShriekChapterObject Implementation
  * ============================================================================ */
 
-struct _BansheeChapterObject {
+struct _ShriekChapterObject {
     GObject parent_instance;
     gdouble start_time;
     gchar *title;
@@ -1008,19 +1008,19 @@ enum {
 
 static GParamSpec *chapter_properties[CHAPTER_N_PROPERTIES] = { NULL, };
 
-G_DEFINE_TYPE(BansheeChapterObject, banshee_chapter_object, G_TYPE_OBJECT)
+G_DEFINE_TYPE(ShriekChapterObject, shriek_chapter_object, G_TYPE_OBJECT)
 
-static void banshee_chapter_object_finalize(GObject *object) {
-    BansheeChapterObject *self = BANSHEE_CHAPTER_OBJECT(object);
+static void shriek_chapter_object_finalize(GObject *object) {
+    ShriekChapterObject *self = SHRIEK_CHAPTER_OBJECT(object);
     g_free(self->title);
     g_free(self->img);
     g_free(self->url);
-    G_OBJECT_CLASS(banshee_chapter_object_parent_class)->finalize(object);
+    G_OBJECT_CLASS(shriek_chapter_object_parent_class)->finalize(object);
 }
 
-static void banshee_chapter_object_get_property(GObject *object, guint prop_id,
+static void shriek_chapter_object_get_property(GObject *object, guint prop_id,
                                                  GValue *value, GParamSpec *pspec) {
-    BansheeChapterObject *self = BANSHEE_CHAPTER_OBJECT(object);
+    ShriekChapterObject *self = SHRIEK_CHAPTER_OBJECT(object);
     
     switch (prop_id) {
         case CHAPTER_PROP_START_TIME:
@@ -1040,9 +1040,9 @@ static void banshee_chapter_object_get_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_chapter_object_set_property(GObject *object, guint prop_id,
+static void shriek_chapter_object_set_property(GObject *object, guint prop_id,
                                                  const GValue *value, GParamSpec *pspec) {
-    BansheeChapterObject *self = BANSHEE_CHAPTER_OBJECT(object);
+    ShriekChapterObject *self = SHRIEK_CHAPTER_OBJECT(object);
     
     switch (prop_id) {
         case CHAPTER_PROP_START_TIME:
@@ -1065,12 +1065,12 @@ static void banshee_chapter_object_set_property(GObject *object, guint prop_id,
     }
 }
 
-static void banshee_chapter_object_class_init(BansheeChapterObjectClass *klass) {
+static void shriek_chapter_object_class_init(ShriekChapterObjectClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     
-    object_class->finalize = banshee_chapter_object_finalize;
-    object_class->get_property = banshee_chapter_object_get_property;
-    object_class->set_property = banshee_chapter_object_set_property;
+    object_class->finalize = shriek_chapter_object_finalize;
+    object_class->get_property = shriek_chapter_object_get_property;
+    object_class->set_property = shriek_chapter_object_set_property;
     
     chapter_properties[CHAPTER_PROP_START_TIME] =
         g_param_spec_double("start-time", "Start Time", "Chapter start time in seconds",
@@ -1095,16 +1095,16 @@ static void banshee_chapter_object_class_init(BansheeChapterObjectClass *klass) 
     g_object_class_install_properties(object_class, CHAPTER_N_PROPERTIES, chapter_properties);
 }
 
-static void banshee_chapter_object_init(BansheeChapterObject *self) {
+static void shriek_chapter_object_init(ShriekChapterObject *self) {
     self->start_time = 0.0;
     self->title = NULL;
     self->img = NULL;
     self->url = NULL;
 }
 
-BansheeChapterObject* banshee_chapter_object_new(gdouble start_time, const gchar *title,
+ShriekChapterObject* shriek_chapter_object_new(gdouble start_time, const gchar *title,
                                                   const gchar *img, const gchar *url) {
-    return g_object_new(BANSHEE_TYPE_CHAPTER_OBJECT,
+    return g_object_new(SHRIEK_TYPE_CHAPTER_OBJECT,
                         "start-time", start_time,
                         "title", title,
                         "img", img,
@@ -1112,22 +1112,22 @@ BansheeChapterObject* banshee_chapter_object_new(gdouble start_time, const gchar
                         NULL);
 }
 
-gdouble banshee_chapter_object_get_start_time(BansheeChapterObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_CHAPTER_OBJECT(self), 0.0);
+gdouble shriek_chapter_object_get_start_time(ShriekChapterObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_CHAPTER_OBJECT(self), 0.0);
     return self->start_time;
 }
 
-const gchar* banshee_chapter_object_get_title(BansheeChapterObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_CHAPTER_OBJECT(self), NULL);
+const gchar* shriek_chapter_object_get_title(ShriekChapterObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_CHAPTER_OBJECT(self), NULL);
     return self->title;
 }
 
-const gchar* banshee_chapter_object_get_img(BansheeChapterObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_CHAPTER_OBJECT(self), NULL);
+const gchar* shriek_chapter_object_get_img(ShriekChapterObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_CHAPTER_OBJECT(self), NULL);
     return self->img;
 }
 
-const gchar* banshee_chapter_object_get_url(BansheeChapterObject *self) {
-    g_return_val_if_fail(BANSHEE_IS_CHAPTER_OBJECT(self), NULL);
+const gchar* shriek_chapter_object_get_url(ShriekChapterObject *self) {
+    g_return_val_if_fail(SHRIEK_IS_CHAPTER_OBJECT(self), NULL);
     return self->url;
 }

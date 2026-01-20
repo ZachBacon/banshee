@@ -46,7 +46,7 @@ typedef struct _Source {
 typedef struct {
     GList *sources;
     Source *active_source;
-    GListStore *source_store;           /* Flat store of BansheeSourceObject */
+    GListStore *source_store;           /* Flat store of ShriekSourceObject */
     GtkTreeListModel *tree_list_model;  /* For hierarchical display */
     GtkSingleSelection *selection;      /* Selection model */
     Database *db;

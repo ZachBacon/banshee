@@ -65,7 +65,7 @@ typedef struct {
     /* Main content area - GTK4 GListStore/GtkColumnView */
     GtkWidget *content_area;
     GtkWidget *track_listview;           /* GtkColumnView widget */
-    GListStore *track_store;             /* GListStore of BansheeTrackObject */
+    GListStore *track_store;             /* GListStore of ShriekTrackObject */
     GtkSingleSelection *track_selection; /* Selection model for track list */
     
     /* Cover art */

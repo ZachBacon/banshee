@@ -1,4 +1,4 @@
-project('banshee', 'c',
+project('shriek', 'c',
   version: '1.0.0',
   default_options: ['warning_level=2', 'c_std=gnu11'])
 
@@ -39,7 +39,7 @@ src_files = [
 ]
 
 # Build executable
-executable('banshee',
+executable('shriek',
   src_files,
   include_directories: inc_dirs,
   dependencies: [gtk_dep, gstreamer_dep, gstreamer_video_dep, gstreamer_pbutils_dep, gstreamer_tag_dep, glib_dep, sqlite_dep, libxml_dep, libcurl_dep, json_glib_dep],
@@ -47,6 +47,6 @@ executable('banshee',
 )
 
 # Desktop file (optional - uncomment to install)
-# install_data('banshee.desktop',
+# install_data('shriek.desktop',
 #   install_dir: join_paths(get_option('datadir'), 'applications')
 # )

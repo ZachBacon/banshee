@@ -22,7 +22,7 @@ SOURCES = $(wildcard $(SRC_DIR)/*.c)
 OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
 
 # Target executable
-TARGET = $(BUILD_DIR)/banshee
+TARGET = $(BUILD_DIR)/shriek
 
 # Include directories
 INCLUDES = -I$(INC_DIR)
@@ -53,12 +53,12 @@ clean:
 
 # Install (optional)
 install: $(TARGET)
-	install -D -m 755 $(TARGET) /usr/local/bin/banshee
+	install -D -m 755 $(TARGET) /usr/local/bin/shriek
 	@echo "Installation complete"
 
 # Uninstall (optional)
 uninstall:
-	rm -f /usr/local/bin/banshee
+	rm -f /usr/local/bin/shriek
 	@echo "Uninstallation complete"
 
 # Run the application
@@ -71,7 +71,7 @@ debug: clean all
 
 # Help
 help:
-	@echo "Banshee Media Player - Build System"
+	@echo "Shriek Media Player - Build System"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all       - Build the application (default)"

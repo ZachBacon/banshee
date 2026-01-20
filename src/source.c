@@ -39,8 +39,8 @@ void source_add_child(Source *parent, Source *child) {
 /* Callback for GtkTreeListModel to get children of an item */
 static GListModel* get_source_children(gpointer item, gpointer user_data) {
     (void)user_data;
-    BansheeSourceObject *source_obj = BANSHEE_SOURCE_OBJECT(item);
-    GListModel *children = banshee_source_object_get_children(source_obj);
+    ShriekSourceObject *source_obj = SHRIEK_SOURCE_OBJECT(item);
+    GListModel *children = shriek_source_object_get_children(source_obj);
     
     if (g_list_model_get_n_items(children) == 0) {
         return NULL;  /* No children */
@@ -53,7 +53,7 @@ SourceManager* source_manager_new(Database *db) {
     SourceManager *manager = g_new0(SourceManager, 1);
     manager->db = db;
     manager->sources = NULL;
-    manager->source_store = g_list_store_new(BANSHEE_TYPE_SOURCE_OBJECT);
+    manager->source_store = g_list_store_new(SHRIEK_TYPE_SOURCE_OBJECT);
     manager->tree_list_model = NULL;
     manager->selection = NULL;
     return manager;
@@ -74,9 +74,9 @@ void source_manager_free(SourceManager *manager) {
     g_free(manager);
 }
 
-/* Recursively add source and its children to BansheeSourceObject */
-static BansheeSourceObject* create_source_object_recursive(Source *source) {
-    BansheeSourceObject *obj = banshee_source_object_new(
+/* Recursively add source and its children to ShriekSourceObject */
+static ShriekSourceObject* create_source_object_recursive(Source *source) {
+    ShriekSourceObject *obj = shriek_source_object_new(
         source->name,
         source->icon_name,
         source
@@ -84,8 +84,8 @@ static BansheeSourceObject* create_source_object_recursive(Source *source) {
     
     for (GList *l = source->children; l != NULL; l = l->next) {
         Source *child = (Source *)l->data;
-        BansheeSourceObject *child_obj = create_source_object_recursive(child);
-        banshee_source_object_add_child(obj, child_obj);
+        ShriekSourceObject *child_obj = create_source_object_recursive(child);
+        shriek_source_object_add_child(obj, child_obj);
         g_object_unref(child_obj);
     }
     
@@ -99,7 +99,7 @@ void source_manager_populate(SourceManager *manager) {
     
     for (GList *l = manager->sources; l != NULL; l = l->next) {
         Source *source = (Source *)l->data;
-        BansheeSourceObject *obj = create_source_object_recursive(source);
+        ShriekSourceObject *obj = create_source_object_recursive(source);
         g_list_store_append(manager->source_store, obj);
         g_object_unref(obj);
     }
@@ -282,12 +282,12 @@ static void bind_sidebar_item(GtkListItemFactory *factory, GtkListItem *list_ite
     GtkTreeListRow *row = gtk_list_item_get_item(list_item);
     gtk_tree_expander_set_list_row(GTK_TREE_EXPANDER(expander), row);
     
-    BansheeSourceObject *source_obj = gtk_tree_list_row_get_item(row);
+    ShriekSourceObject *source_obj = gtk_tree_list_row_get_item(row);
     if (source_obj) {
         gtk_image_set_from_icon_name(GTK_IMAGE(icon), 
-            banshee_source_object_get_icon_name(source_obj));
+            shriek_source_object_get_icon_name(source_obj));
         gtk_label_set_text(GTK_LABEL(label), 
-            banshee_source_object_get_name(source_obj));
+            shriek_source_object_get_name(source_obj));
         g_object_unref(source_obj);
     }
 }
@@ -340,12 +340,12 @@ Source* source_get_by_selection(SourceManager *manager) {
         G_LIST_MODEL(manager->tree_list_model), position);
     if (!row) return NULL;
     
-    BansheeSourceObject *source_obj = gtk_tree_list_row_get_item(row);
+    ShriekSourceObject *source_obj = gtk_tree_list_row_get_item(row);
     g_object_unref(row);
     
     if (!source_obj) return NULL;
     
-    Source *source = banshee_source_object_get_source(source_obj);
+    Source *source = shriek_source_object_get_source(source_obj);
     g_object_unref(source_obj);
     
     return source;

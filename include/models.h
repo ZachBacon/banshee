@@ -7,122 +7,122 @@
 G_BEGIN_DECLS
 
 /* ============================================================================
- * BansheeTrackObject - GObject wrapper for Track data (for use with GListStore)
+ * ShriekTrackObject - GObject wrapper for Track data (for use with GListStore)
  * ============================================================================ */
 
-#define BANSHEE_TYPE_TRACK_OBJECT (banshee_track_object_get_type())
-G_DECLARE_FINAL_TYPE(BansheeTrackObject, banshee_track_object, BANSHEE, TRACK_OBJECT, GObject)
+#define SHRIEK_TYPE_TRACK_OBJECT (shriek_track_object_get_type())
+G_DECLARE_FINAL_TYPE(ShriekTrackObject, shriek_track_object, SHRIEK, TRACK_OBJECT, GObject)
 
-BansheeTrackObject* banshee_track_object_new(gint id, gint track_number, 
+ShriekTrackObject* shriek_track_object_new(gint id, gint track_number, 
                                               const gchar *title, const gchar *artist,
                                               const gchar *album, const gchar *duration_str,
                                               gint duration_seconds, const gchar *file_path,
                                               gint play_count);
 
 /* Property accessors */
-gint banshee_track_object_get_id(BansheeTrackObject *self);
-gint banshee_track_object_get_track_number(BansheeTrackObject *self);
-const gchar* banshee_track_object_get_title(BansheeTrackObject *self);
-const gchar* banshee_track_object_get_artist(BansheeTrackObject *self);
-const gchar* banshee_track_object_get_album(BansheeTrackObject *self);
-const gchar* banshee_track_object_get_duration_str(BansheeTrackObject *self);
-gint banshee_track_object_get_duration_seconds(BansheeTrackObject *self);
-const gchar* banshee_track_object_get_file_path(BansheeTrackObject *self);
-gint banshee_track_object_get_play_count(BansheeTrackObject *self);
+gint shriek_track_object_get_id(ShriekTrackObject *self);
+gint shriek_track_object_get_track_number(ShriekTrackObject *self);
+const gchar* shriek_track_object_get_title(ShriekTrackObject *self);
+const gchar* shriek_track_object_get_artist(ShriekTrackObject *self);
+const gchar* shriek_track_object_get_album(ShriekTrackObject *self);
+const gchar* shriek_track_object_get_duration_str(ShriekTrackObject *self);
+gint shriek_track_object_get_duration_seconds(ShriekTrackObject *self);
+const gchar* shriek_track_object_get_file_path(ShriekTrackObject *self);
+gint shriek_track_object_get_play_count(ShriekTrackObject *self);
 
 /* ============================================================================
- * BansheeBrowserItem - GObject wrapper for browser list items
+ * ShriekBrowserItem - GObject wrapper for browser list items
  * ============================================================================ */
 
-#define BANSHEE_TYPE_BROWSER_ITEM (banshee_browser_item_get_type())
-G_DECLARE_FINAL_TYPE(BansheeBrowserItem, banshee_browser_item, BANSHEE, BROWSER_ITEM, GObject)
+#define SHRIEK_TYPE_BROWSER_ITEM (shriek_browser_item_get_type())
+G_DECLARE_FINAL_TYPE(ShriekBrowserItem, shriek_browser_item, SHRIEK, BROWSER_ITEM, GObject)
 
-BansheeBrowserItem* banshee_browser_item_new(gint id, const gchar *name, gint count);
+ShriekBrowserItem* shriek_browser_item_new(gint id, const gchar *name, gint count);
 
-gint banshee_browser_item_get_id(BansheeBrowserItem *self);
-const gchar* banshee_browser_item_get_name(BansheeBrowserItem *self);
-gint banshee_browser_item_get_count(BansheeBrowserItem *self);
+gint shriek_browser_item_get_id(ShriekBrowserItem *self);
+const gchar* shriek_browser_item_get_name(ShriekBrowserItem *self);
+gint shriek_browser_item_get_count(ShriekBrowserItem *self);
 
 /* ============================================================================
- * BansheeSourceObject - GObject wrapper for Source sidebar items
+ * ShriekSourceObject - GObject wrapper for Source sidebar items
  * ============================================================================ */
 
-#define BANSHEE_TYPE_SOURCE_OBJECT (banshee_source_object_get_type())
-G_DECLARE_FINAL_TYPE(BansheeSourceObject, banshee_source_object, BANSHEE, SOURCE_OBJECT, GObject)
+#define SHRIEK_TYPE_SOURCE_OBJECT (shriek_source_object_get_type())
+G_DECLARE_FINAL_TYPE(ShriekSourceObject, shriek_source_object, SHRIEK, SOURCE_OBJECT, GObject)
 
 /* Forward declare Source type from source.h */
 typedef struct _Source Source;
 
-BansheeSourceObject* banshee_source_object_new(const gchar *name, const gchar *icon_name, 
+ShriekSourceObject* shriek_source_object_new(const gchar *name, const gchar *icon_name, 
                                                 gpointer source_ptr);
 
-const gchar* banshee_source_object_get_name(BansheeSourceObject *self);
-const gchar* banshee_source_object_get_icon_name(BansheeSourceObject *self);
-gpointer banshee_source_object_get_source(BansheeSourceObject *self);
-GListModel* banshee_source_object_get_children(BansheeSourceObject *self);
-void banshee_source_object_add_child(BansheeSourceObject *self, BansheeSourceObject *child);
+const gchar* shriek_source_object_get_name(ShriekSourceObject *self);
+const gchar* shriek_source_object_get_icon_name(ShriekSourceObject *self);
+gpointer shriek_source_object_get_source(ShriekSourceObject *self);
+GListModel* shriek_source_object_get_children(ShriekSourceObject *self);
+void shriek_source_object_add_child(ShriekSourceObject *self, ShriekSourceObject *child);
 
 /* ============================================================================
- * BansheePodcastObject - GObject wrapper for podcast list items
+ * ShriekPodcastObject - GObject wrapper for podcast list items
  * ============================================================================ */
 
-#define BANSHEE_TYPE_PODCAST_OBJECT (banshee_podcast_object_get_type())
-G_DECLARE_FINAL_TYPE(BansheePodcastObject, banshee_podcast_object, BANSHEE, PODCAST_OBJECT, GObject)
+#define SHRIEK_TYPE_PODCAST_OBJECT (shriek_podcast_object_get_type())
+G_DECLARE_FINAL_TYPE(ShriekPodcastObject, shriek_podcast_object, SHRIEK, PODCAST_OBJECT, GObject)
 
-BansheePodcastObject* banshee_podcast_object_new(gint id, const gchar *title, const gchar *author);
+ShriekPodcastObject* shriek_podcast_object_new(gint id, const gchar *title, const gchar *author);
 
-gint banshee_podcast_object_get_id(BansheePodcastObject *self);
-const gchar* banshee_podcast_object_get_title(BansheePodcastObject *self);
-const gchar* banshee_podcast_object_get_author(BansheePodcastObject *self);
+gint shriek_podcast_object_get_id(ShriekPodcastObject *self);
+const gchar* shriek_podcast_object_get_title(ShriekPodcastObject *self);
+const gchar* shriek_podcast_object_get_author(ShriekPodcastObject *self);
 
 /* ============================================================================
- * BansheeEpisodeObject - GObject wrapper for episode list items
+ * ShriekEpisodeObject - GObject wrapper for episode list items
  * ============================================================================ */
 
-#define BANSHEE_TYPE_EPISODE_OBJECT (banshee_episode_object_get_type())
-G_DECLARE_FINAL_TYPE(BansheeEpisodeObject, banshee_episode_object, BANSHEE, EPISODE_OBJECT, GObject)
+#define SHRIEK_TYPE_EPISODE_OBJECT (shriek_episode_object_get_type())
+G_DECLARE_FINAL_TYPE(ShriekEpisodeObject, shriek_episode_object, SHRIEK, EPISODE_OBJECT, GObject)
 
-BansheeEpisodeObject* banshee_episode_object_new(gint id, const gchar *title, 
+ShriekEpisodeObject* shriek_episode_object_new(gint id, const gchar *title, 
                                                   const gchar *date, const gchar *duration,
                                                   gboolean downloaded);
 
-gint banshee_episode_object_get_id(BansheeEpisodeObject *self);
-const gchar* banshee_episode_object_get_title(BansheeEpisodeObject *self);
-const gchar* banshee_episode_object_get_date(BansheeEpisodeObject *self);
-const gchar* banshee_episode_object_get_duration(BansheeEpisodeObject *self);
-gboolean banshee_episode_object_get_downloaded(BansheeEpisodeObject *self);
+gint shriek_episode_object_get_id(ShriekEpisodeObject *self);
+const gchar* shriek_episode_object_get_title(ShriekEpisodeObject *self);
+const gchar* shriek_episode_object_get_date(ShriekEpisodeObject *self);
+const gchar* shriek_episode_object_get_duration(ShriekEpisodeObject *self);
+gboolean shriek_episode_object_get_downloaded(ShriekEpisodeObject *self);
 
 /* ============================================================================
- * BansheeVideoObject - GObject wrapper for video list items
+ * ShriekVideoObject - GObject wrapper for video list items
  * ============================================================================ */
 
-#define BANSHEE_TYPE_VIDEO_OBJECT (banshee_video_object_get_type())
-G_DECLARE_FINAL_TYPE(BansheeVideoObject, banshee_video_object, BANSHEE, VIDEO_OBJECT, GObject)
+#define SHRIEK_TYPE_VIDEO_OBJECT (shriek_video_object_get_type())
+G_DECLARE_FINAL_TYPE(ShriekVideoObject, shriek_video_object, SHRIEK, VIDEO_OBJECT, GObject)
 
-BansheeVideoObject* banshee_video_object_new(gint id, const gchar *title, 
+ShriekVideoObject* shriek_video_object_new(gint id, const gchar *title, 
                                               const gchar *artist, const gchar *duration,
                                               const gchar *file_path);
 
-gint banshee_video_object_get_id(BansheeVideoObject *self);
-const gchar* banshee_video_object_get_title(BansheeVideoObject *self);
-const gchar* banshee_video_object_get_artist(BansheeVideoObject *self);
-const gchar* banshee_video_object_get_duration(BansheeVideoObject *self);
-const gchar* banshee_video_object_get_file_path(BansheeVideoObject *self);
+gint shriek_video_object_get_id(ShriekVideoObject *self);
+const gchar* shriek_video_object_get_title(ShriekVideoObject *self);
+const gchar* shriek_video_object_get_artist(ShriekVideoObject *self);
+const gchar* shriek_video_object_get_duration(ShriekVideoObject *self);
+const gchar* shriek_video_object_get_file_path(ShriekVideoObject *self);
 
 /* ============================================================================
- * BansheeChapterObject - GObject wrapper for chapter list items
+ * ShriekChapterObject - GObject wrapper for chapter list items
  * ============================================================================ */
 
-#define BANSHEE_TYPE_CHAPTER_OBJECT (banshee_chapter_object_get_type())
-G_DECLARE_FINAL_TYPE(BansheeChapterObject, banshee_chapter_object, BANSHEE, CHAPTER_OBJECT, GObject)
+#define SHRIEK_TYPE_CHAPTER_OBJECT (shriek_chapter_object_get_type())
+G_DECLARE_FINAL_TYPE(ShriekChapterObject, shriek_chapter_object, SHRIEK, CHAPTER_OBJECT, GObject)
 
-BansheeChapterObject* banshee_chapter_object_new(gdouble start_time, const gchar *title,
+ShriekChapterObject* shriek_chapter_object_new(gdouble start_time, const gchar *title,
                                                   const gchar *img, const gchar *url);
 
-gdouble banshee_chapter_object_get_start_time(BansheeChapterObject *self);
-const gchar* banshee_chapter_object_get_title(BansheeChapterObject *self);
-const gchar* banshee_chapter_object_get_img(BansheeChapterObject *self);
-const gchar* banshee_chapter_object_get_url(BansheeChapterObject *self);
+gdouble shriek_chapter_object_get_start_time(ShriekChapterObject *self);
+const gchar* shriek_chapter_object_get_title(ShriekChapterObject *self);
+const gchar* shriek_chapter_object_get_img(ShriekChapterObject *self);
+const gchar* shriek_chapter_object_get_url(ShriekChapterObject *self);
 
 G_END_DECLS
 

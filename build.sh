@@ -1,10 +1,10 @@
 #!/bin/bash
-# Quick build and run script for Banshee Media Player
+# Quick build and run script for Shriek Media Player
 
 set -e  # Exit on error
 
 echo "================================"
-echo "Banshee Media Player - Build Script"
+echo "Shriek Media Player - Build Script"
 echo "================================"
 echo ""
 
@@ -33,7 +33,7 @@ echo "All dependencies found!"
 echo ""
 
 # Build the project
-echo "Building Banshee..."
+echo "Building Shriek..."
 make clean
 make
 
@@ -44,17 +44,17 @@ if [ $? -eq 0 ]; then
     echo "================================"
     echo ""
     echo "To run the application:"
-    echo "  ./build/banshee"
+    echo "  ./build/shriek"
     echo ""
     echo "Or use: make run"
     echo ""
     
     # Ask if user wants to run
-    read -p "Run Banshee now? (y/n) " -n 1 -r
+    read -p "Run Shriek now? (y/n) " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "Starting Banshee Media Player..."
-        ./build/banshee
+        echo "Starting Shriek Media Player..."
+        ./build/shriek
     fi
 else
     echo ""

@@ -19,10 +19,10 @@ static void on_chapter_activated(GtkColumnView *column_view, guint position, gpo
     ChapterView *view = (ChapterView *)user_data;
     (void)column_view;
     
-    BansheeChapterObject *obj = g_list_model_get_item(G_LIST_MODEL(view->store), position);
+    ShriekChapterObject *obj = g_list_model_get_item(G_LIST_MODEL(view->store), position);
     if (!obj) return;
     
-    gdouble start_time = banshee_chapter_object_get_start_time(obj);
+    gdouble start_time = shriek_chapter_object_get_start_time(obj);
     
     /* Call seek callback if set */
     if (view->seek_callback) {
@@ -56,9 +56,9 @@ static void bind_time_label(GtkListItemFactory *factory, GtkListItem *list_item,
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeChapterObject *obj = gtk_list_item_get_item(list_item);
+    ShriekChapterObject *obj = gtk_list_item_get_item(list_item);
     if (obj) {
-        gchar *time_str = format_time(banshee_chapter_object_get_start_time(obj));
+        gchar *time_str = format_time(shriek_chapter_object_get_start_time(obj));
         gtk_label_set_text(GTK_LABEL(label), time_str);
         g_free(time_str);
     }
@@ -77,9 +77,9 @@ static void bind_title_label(GtkListItemFactory *factory, GtkListItem *list_item
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeChapterObject *obj = gtk_list_item_get_item(list_item);
+    ShriekChapterObject *obj = gtk_list_item_get_item(list_item);
     if (obj) {
-        const gchar *title = banshee_chapter_object_get_title(obj);
+        const gchar *title = shriek_chapter_object_get_title(obj);
         gtk_label_set_text(GTK_LABEL(label), title ? title : "Untitled");
     }
 }
@@ -98,7 +98,7 @@ ChapterView* chapter_view_new(void) {
     gtk_box_append(GTK_BOX(view->container), label);
     
     /* GTK4: Create GListStore for chapters */
-    view->store = g_list_store_new(BANSHEE_TYPE_CHAPTER_OBJECT);
+    view->store = g_list_store_new(SHRIEK_TYPE_CHAPTER_OBJECT);
     
     /* Create selection model */
     view->selection = gtk_single_selection_new(G_LIST_MODEL(view->store));
@@ -176,7 +176,7 @@ void chapter_view_set_chapters(ChapterView *view, GList *chapters) {
     for (GList *l = chapters; l != NULL; l = l->next) {
         PodcastChapter *chapter = (PodcastChapter *)l->data;
         
-        BansheeChapterObject *obj = banshee_chapter_object_new(
+        ShriekChapterObject *obj = shriek_chapter_object_new(
             chapter->start_time,
             chapter->title ? chapter->title : "Untitled",
             chapter->img,
@@ -209,9 +209,9 @@ void chapter_view_highlight_current(ChapterView *view, gdouble current_time) {
     guint n_items = g_list_model_get_n_items(G_LIST_MODEL(view->store));
     
     for (guint i = 0; i < n_items; i++) {
-        BansheeChapterObject *obj = g_list_model_get_item(G_LIST_MODEL(view->store), i);
+        ShriekChapterObject *obj = g_list_model_get_item(G_LIST_MODEL(view->store), i);
         if (obj) {
-            gdouble start_time = banshee_chapter_object_get_start_time(obj);
+            gdouble start_time = shriek_chapter_object_get_start_time(obj);
             
             if (start_time == current_chapter->start_time) {
                 gtk_single_selection_set_selected(view->selection, i);

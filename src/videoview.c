@@ -457,12 +457,12 @@ static void on_video_activated(GtkColumnView *column_view, guint position, gpoin
     VideoView *view = (VideoView *)user_data;
     (void)column_view;
     
-    BansheeVideoObject *obj = g_list_model_get_item(G_LIST_MODEL(view->video_store), position);
+    ShriekVideoObject *obj = g_list_model_get_item(G_LIST_MODEL(view->video_store), position);
     if (!obj) return;
     
-    gint video_id = banshee_video_object_get_id(obj);
-    const gchar *title = banshee_video_object_get_title(obj);
-    const gchar *file_path = banshee_video_object_get_file_path(obj);
+    gint video_id = shriek_video_object_get_id(obj);
+    const gchar *title = shriek_video_object_get_title(obj);
+    const gchar *file_path = shriek_video_object_get_file_path(obj);
     
     if (file_path && view->player) {
         view->video_playing = TRUE;
@@ -510,9 +510,9 @@ static void bind_video_title_label(GtkListItemFactory *factory, GtkListItem *lis
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeVideoObject *obj = gtk_list_item_get_item(list_item);
+    ShriekVideoObject *obj = gtk_list_item_get_item(list_item);
     if (obj) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_video_object_get_title(obj));
+        gtk_label_set_text(GTK_LABEL(label), shriek_video_object_get_title(obj));
     }
 }
 
@@ -529,9 +529,9 @@ static void bind_video_artist_label(GtkListItemFactory *factory, GtkListItem *li
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeVideoObject *obj = gtk_list_item_get_item(list_item);
+    ShriekVideoObject *obj = gtk_list_item_get_item(list_item);
     if (obj) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_video_object_get_artist(obj));
+        gtk_label_set_text(GTK_LABEL(label), shriek_video_object_get_artist(obj));
     }
 }
 
@@ -547,9 +547,9 @@ static void bind_video_duration_label(GtkListItemFactory *factory, GtkListItem *
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeVideoObject *obj = gtk_list_item_get_item(list_item);
+    ShriekVideoObject *obj = gtk_list_item_get_item(list_item);
     if (obj) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_video_object_get_duration(obj));
+        gtk_label_set_text(GTK_LABEL(label), shriek_video_object_get_duration(obj));
     }
 }
 
@@ -569,7 +569,7 @@ VideoView* video_view_new(Database *database, MediaPlayer *player) {
     GtkWidget *list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     
     /* GTK4: Create GListStore for videos */
-    view->video_store = g_list_store_new(BANSHEE_TYPE_VIDEO_OBJECT);
+    view->video_store = g_list_store_new(SHRIEK_TYPE_VIDEO_OBJECT);
     
     /* Create selection model */
     view->video_selection = gtk_single_selection_new(G_LIST_MODEL(view->video_store));
@@ -696,7 +696,7 @@ void video_view_load_videos(VideoView *view) {
         gchar duration_str[32];
         format_video_time(video->duration, duration_str, sizeof(duration_str));
         
-        BansheeVideoObject *obj = banshee_video_object_new(
+        ShriekVideoObject *obj = shriek_video_object_new(
             video->id,
             video->title ? video->title : "Unknown",
             video->artist ? video->artist : "Unknown",

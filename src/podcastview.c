@@ -185,9 +185,9 @@ static void bind_podcast_title_label(GtkListItemFactory *factory, GtkListItem *l
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheePodcastObject *podcast = gtk_list_item_get_item(list_item);
+    ShriekPodcastObject *podcast = gtk_list_item_get_item(list_item);
     if (podcast) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_podcast_object_get_title(podcast));
+        gtk_label_set_text(GTK_LABEL(label), shriek_podcast_object_get_title(podcast));
     }
 }
 
@@ -208,9 +208,9 @@ static void bind_episode_title_label(GtkListItemFactory *factory, GtkListItem *l
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeEpisodeObject *episode = gtk_list_item_get_item(list_item);
+    ShriekEpisodeObject *episode = gtk_list_item_get_item(list_item);
     if (episode) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_episode_object_get_title(episode));
+        gtk_label_set_text(GTK_LABEL(label), shriek_episode_object_get_title(episode));
     }
 }
 
@@ -226,9 +226,9 @@ static void bind_episode_date_label(GtkListItemFactory *factory, GtkListItem *li
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeEpisodeObject *episode = gtk_list_item_get_item(list_item);
+    ShriekEpisodeObject *episode = gtk_list_item_get_item(list_item);
     if (episode) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_episode_object_get_date(episode));
+        gtk_label_set_text(GTK_LABEL(label), shriek_episode_object_get_date(episode));
     }
 }
 
@@ -244,9 +244,9 @@ static void bind_episode_duration_label(GtkListItemFactory *factory, GtkListItem
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeEpisodeObject *episode = gtk_list_item_get_item(list_item);
+    ShriekEpisodeObject *episode = gtk_list_item_get_item(list_item);
     if (episode) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_episode_object_get_duration(episode));
+        gtk_label_set_text(GTK_LABEL(label), shriek_episode_object_get_duration(episode));
     }
 }
 
@@ -262,10 +262,10 @@ static void bind_episode_downloaded_check(GtkListItemFactory *factory, GtkListIt
     (void)factory;
     (void)user_data;
     GtkWidget *check = gtk_list_item_get_child(list_item);
-    BansheeEpisodeObject *episode = gtk_list_item_get_item(list_item);
+    ShriekEpisodeObject *episode = gtk_list_item_get_item(list_item);
     if (episode) {
         gtk_check_button_set_active(GTK_CHECK_BUTTON(check), 
-            banshee_episode_object_get_downloaded(episode));
+            shriek_episode_object_get_downloaded(episode));
     }
 }
 
@@ -279,12 +279,12 @@ static void on_podcast_selection_changed(GtkSelectionModel *selection, guint pos
     guint selected_pos = gtk_single_selection_get_selected(single_sel);
     
     if (selected_pos != GTK_INVALID_LIST_POSITION) {
-        BansheePodcastObject *podcast_obj = g_list_model_get_item(
+        ShriekPodcastObject *podcast_obj = g_list_model_get_item(
             G_LIST_MODEL(view->podcast_store), selected_pos);
         
         if (!podcast_obj) return;
         
-        gint podcast_id = banshee_podcast_object_get_id(podcast_obj);
+        gint podcast_id = shriek_podcast_object_get_id(podcast_obj);
         g_object_unref(podcast_obj);
         
         view->selected_podcast_id = podcast_id;
@@ -361,12 +361,12 @@ static void on_episode_selection_changed(GtkSelectionModel *selection, guint pos
     guint selected_pos = gtk_single_selection_get_selected(single_sel);
     
     if (selected_pos != GTK_INVALID_LIST_POSITION) {
-        BansheeEpisodeObject *episode_obj = g_list_model_get_item(
+        ShriekEpisodeObject *episode_obj = g_list_model_get_item(
             G_LIST_MODEL(view->episode_store), selected_pos);
         
         if (!episode_obj) return;
         
-        gint episode_id = banshee_episode_object_get_id(episode_obj);
+        gint episode_id = shriek_episode_object_get_id(episode_obj);
         g_object_unref(episode_obj);
         
         /* Load episode and its funding information */
@@ -502,10 +502,10 @@ static void on_refresh_button_clicked(GtkButton *button, gpointer user_data) {
     /* If a podcast is selected, refresh its episodes too */
     guint selected_pos = gtk_single_selection_get_selected(view->podcast_selection);
     if (selected_pos != GTK_INVALID_LIST_POSITION) {
-        BansheePodcastObject *podcast_obj = g_list_model_get_item(
+        ShriekPodcastObject *podcast_obj = g_list_model_get_item(
             G_LIST_MODEL(view->podcast_store), selected_pos);
         if (podcast_obj) {
-            gint podcast_id = banshee_podcast_object_get_id(podcast_obj);
+            gint podcast_id = shriek_podcast_object_get_id(podcast_obj);
             g_object_unref(podcast_obj);
             podcast_view_refresh_episodes(view, podcast_id);
         }
@@ -518,10 +518,10 @@ static void on_download_button_clicked(GtkButton *button, gpointer user_data) {
     
     guint selected_pos = gtk_single_selection_get_selected(view->episode_selection);
     if (selected_pos != GTK_INVALID_LIST_POSITION) {
-        BansheeEpisodeObject *episode_obj = g_list_model_get_item(
+        ShriekEpisodeObject *episode_obj = g_list_model_get_item(
             G_LIST_MODEL(view->episode_store), selected_pos);
         if (episode_obj) {
-            gint episode_id = banshee_episode_object_get_id(episode_obj);
+            gint episode_id = shriek_episode_object_get_id(episode_obj);
             g_object_unref(episode_obj);
             podcast_view_download_episode(view, episode_id);
         }
@@ -543,11 +543,11 @@ static void on_episode_activated(GtkColumnView *column_view, guint position, gpo
     (void)column_view;
     PodcastView *view = (PodcastView *)user_data;
     
-    BansheeEpisodeObject *episode_obj = g_list_model_get_item(
+    ShriekEpisodeObject *episode_obj = g_list_model_get_item(
         G_LIST_MODEL(view->episode_store), position);
     
     if (episode_obj) {
-        gint episode_id = banshee_episode_object_get_id(episode_obj);
+        gint episode_id = shriek_episode_object_get_id(episode_obj);
         g_object_unref(episode_obj);
         podcast_view_play_episode(view, episode_id);
     }
@@ -1157,7 +1157,7 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     gtk_paned_set_position(GTK_PANED(view->paned), 250);
     
     /* Podcast list - GTK4 GListStore/GtkColumnView */
-    view->podcast_store = g_list_store_new(BANSHEE_TYPE_PODCAST_OBJECT);
+    view->podcast_store = g_list_store_new(SHRIEK_TYPE_PODCAST_OBJECT);
     view->podcast_selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(view->podcast_store)));
     gtk_single_selection_set_autoselect(view->podcast_selection, FALSE);
     
@@ -1188,7 +1188,7 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
     gtk_paned_set_resize_start_child(GTK_PANED(view->paned), FALSE);
     
     /* Episode list - GTK4 GListStore/GtkColumnView */
-    view->episode_store = g_list_store_new(BANSHEE_TYPE_EPISODE_OBJECT);
+    view->episode_store = g_list_store_new(SHRIEK_TYPE_EPISODE_OBJECT);
     view->episode_selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(view->episode_store)));
     gtk_single_selection_set_autoselect(view->episode_selection, FALSE);
     
@@ -1380,7 +1380,7 @@ void podcast_view_refresh_podcasts(PodcastView *view) {
     for (GList *l = podcasts; l != NULL; l = l->next) {
         Podcast *podcast = (Podcast *)l->data;
         
-        BansheePodcastObject *obj = banshee_podcast_object_new(
+        ShriekPodcastObject *obj = shriek_podcast_object_new(
             podcast->id,
             podcast->title ? podcast->title : "Unknown",
             podcast->author ? podcast->author : ""
@@ -1426,7 +1426,7 @@ void podcast_view_refresh_episodes(PodcastView *view, gint podcast_id) {
             }
         }
         
-        BansheeEpisodeObject *obj = banshee_episode_object_new(
+        ShriekEpisodeObject *obj = shriek_episode_object_new(
             episode->id,
             episode->title ? episode->title : "Unknown",
             date_str,
@@ -1748,7 +1748,7 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
                     }
                 }
                 
-                BansheeEpisodeObject *obj = banshee_episode_object_new(
+                ShriekEpisodeObject *obj = shriek_episode_object_new(
                     episode->id,
                     episode->title ? episode->title : "Unknown",
                     date_str,
@@ -1773,7 +1773,7 @@ void podcast_view_filter(PodcastView *view, const gchar *search_text) {
         Podcast *podcast = (Podcast *)l->data;
         
         if (g_hash_table_contains(podcasts_with_matches, GINT_TO_POINTER(podcast->id))) {
-            BansheePodcastObject *obj = banshee_podcast_object_new(
+            ShriekPodcastObject *obj = shriek_podcast_object_new(
                 podcast->id,
                 podcast->title ? podcast->title : "Unknown",
                 podcast->author ? podcast->author : ""

@@ -11,7 +11,7 @@ static void coverart_fetch_pool_func(gpointer data, gpointer user_data);
 CoverArtManager* coverart_manager_new(void) {
     CoverArtManager *manager = g_new0(CoverArtManager, 1);
     
-    manager->cache_dir = g_build_filename(g_get_user_cache_dir(), "banshee", "covers", NULL);
+    manager->cache_dir = g_build_filename(g_get_user_cache_dir(), "shriek", "covers", NULL);
     g_mkdir_with_parents(manager->cache_dir, 0755);
     
     manager->cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);

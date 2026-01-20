@@ -104,7 +104,7 @@ static gchar* fetch_url_with_handle(const gchar *url, CURL *reuse_handle) {
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Banshee/1.0 (Podcast 2.0)");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Shriek/1.0 (Podcast 2.0)");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     
@@ -138,7 +138,7 @@ gchar* fetch_binary_url(const gchar *url, gsize *out_size) {
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Banshee/1.0 (Podcast 2.0)");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Shriek/1.0 (Podcast 2.0)");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
     
@@ -1541,7 +1541,7 @@ static void download_thread_func(gpointer data, gpointer user_data) {
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);  /* 10 minute timeout */
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Banshee Media Player/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Shriek Media Player/1.0");
     
     /* Set up progress tracking */
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, download_progress_callback);

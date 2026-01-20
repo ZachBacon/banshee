@@ -1,9 +1,9 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Banshee Media Player
+Name=Shriek Media Player
 Comment=A GTK-based media player with GStreamer
-Exec=banshee
+Exec=shriek
 Icon=multimedia-audio-player
 Terminal=false
 Categories=AudioVideo;Audio;Player;GTK;

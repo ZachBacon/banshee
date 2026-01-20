@@ -92,7 +92,7 @@ static GtkWidget* create_hamburger_menu(MediaPlayerUI *ui) {
     
     /* App section */
     GMenu *app_section = g_menu_new();
-    g_menu_append(app_section, "About Banshee", "win.about");
+    g_menu_append(app_section, "About Shriek", "win.about");
     g_menu_append(app_section, "Quit", "win.quit");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));
     
@@ -162,7 +162,7 @@ static GtkWidget* create_headerbar(MediaPlayerUI *ui) {
     
     /* Title widget - GTK4 uses set_title_widget instead of set_title/subtitle */
     GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    GtkWidget *title_label = gtk_label_new("Banshee");
+    GtkWidget *title_label = gtk_label_new("Shriek");
     gtk_widget_add_css_class(title_label, "title");
     GtkWidget *subtitle_label = gtk_label_new("Media Player");
     gtk_widget_add_css_class(subtitle_label, "subtitle");
@@ -388,11 +388,11 @@ static void init_browsers(MediaPlayerUI *ui) {
     ui->album_browser = browser_view_new(ui->album_model);
     ui->genre_browser = browser_view_new(ui->genre_model);
     
-    /* Single artist browser like original Banshee (not iTunes 3-row style) */
+    /* Single artist browser like original Shriek (not iTunes 3-row style) */
     ui->browser_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_size_request(ui->browser_container, 180, -1);
     
-    /* Only pack artist browser - cleaner, more like Banshee */
+    /* Only pack artist browser - cleaner, more like Shriek */
     GtkWidget *artist_widget = browser_view_get_widget(ui->artist_browser);
     gtk_widget_set_vexpand(artist_widget, TRUE);
     gtk_box_append(GTK_BOX(ui->browser_container), artist_widget);
@@ -514,9 +514,9 @@ static void setup_track_num_label(GtkSignalListItemFactory *factory, GtkListItem
 static void bind_track_num_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
     (void)factory; (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    ShriekTrackObject *track = gtk_list_item_get_item(list_item);
     if (track) {
-        gint num = banshee_track_object_get_track_number(track);
+        gint num = shriek_track_object_get_track_number(track);
         gchar *text = g_strdup_printf("%d", num);
         gtk_label_set_text(GTK_LABEL(label), text);
         g_free(text);
@@ -536,9 +536,9 @@ static void setup_title_label(GtkSignalListItemFactory *factory, GtkListItem *li
 static void bind_title_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
     (void)factory; (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    ShriekTrackObject *track = gtk_list_item_get_item(list_item);
     if (track) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_track_object_get_title(track));
+        gtk_label_set_text(GTK_LABEL(label), shriek_track_object_get_title(track));
     }
 }
 
@@ -555,9 +555,9 @@ static void setup_artist_label(GtkSignalListItemFactory *factory, GtkListItem *l
 static void bind_artist_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
     (void)factory; (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    ShriekTrackObject *track = gtk_list_item_get_item(list_item);
     if (track) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_track_object_get_artist(track));
+        gtk_label_set_text(GTK_LABEL(label), shriek_track_object_get_artist(track));
     }
 }
 
@@ -574,9 +574,9 @@ static void setup_album_label(GtkSignalListItemFactory *factory, GtkListItem *li
 static void bind_album_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
     (void)factory; (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    ShriekTrackObject *track = gtk_list_item_get_item(list_item);
     if (track) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_track_object_get_album(track));
+        gtk_label_set_text(GTK_LABEL(label), shriek_track_object_get_album(track));
     }
 }
 
@@ -592,9 +592,9 @@ static void setup_duration_label(GtkSignalListItemFactory *factory, GtkListItem 
 static void bind_duration_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
     (void)factory; (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    ShriekTrackObject *track = gtk_list_item_get_item(list_item);
     if (track) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_track_object_get_duration_str(track));
+        gtk_label_set_text(GTK_LABEL(label), shriek_track_object_get_duration_str(track));
     }
 }
 
@@ -610,9 +610,9 @@ static void setup_playcount_label(GtkSignalListItemFactory *factory, GtkListItem
 static void bind_playcount_label(GtkSignalListItemFactory *factory, GtkListItem *list_item, gpointer user_data) {
     (void)factory; (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeTrackObject *track = gtk_list_item_get_item(list_item);
+    ShriekTrackObject *track = gtk_list_item_get_item(list_item);
     if (track) {
-        gint play_count = banshee_track_object_get_play_count(track);
+        gint play_count = shriek_track_object_get_play_count(track);
         gchar *count_str = g_strdup_printf("%d", play_count);
         gtk_label_set_text(GTK_LABEL(label), count_str);
         g_free(count_str);
@@ -626,10 +626,10 @@ static void on_toggle_favorite_action(GSimpleAction *action, GVariant *parameter
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
     
     /* Get selected track */
-    BansheeTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
+    ShriekTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
     if (!track_obj) return;
     
-    gint track_id = banshee_track_object_get_id(track_obj);
+    gint track_id = shriek_track_object_get_id(track_obj);
     database_toggle_favorite(ui->database, track_id);
     
     /* Refresh the track list to show updated state */
@@ -653,10 +653,10 @@ static void on_track_right_click(GtkGestureClick *gesture, gint n_press, gdouble
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
     
     /* Get the selected track */
-    BansheeTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
+    ShriekTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
     if (!track_obj) return;
     
-    gint track_id = banshee_track_object_get_id(track_obj);
+    gint track_id = shriek_track_object_get_id(track_obj);
     gboolean is_fav = database_is_favorite(ui->database, track_id);
     
     /* Create context menu */
@@ -695,8 +695,8 @@ static GtkWidget* create_track_list(MediaPlayerUI *ui) {
                                     GTK_POLICY_AUTOMATIC,
                                     GTK_POLICY_AUTOMATIC);
     
-    /* GTK4: Use GListStore with BansheeTrackObject GObjects */
-    ui->track_store = g_list_store_new(BANSHEE_TYPE_TRACK_OBJECT);
+    /* GTK4: Use GListStore with ShriekTrackObject GObjects */
+    ui->track_store = g_list_store_new(SHRIEK_TYPE_TRACK_OBJECT);
     
     /* Create selection model */
     ui->track_selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(ui->track_store)));
@@ -1061,7 +1061,7 @@ MediaPlayerUI* ui_new(MediaPlayer *player, Database *database, GtkApplication *a
     
     /* Create window - GTK4 uses GtkApplicationWindow */
     ui->window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(ui->window), "Banshee Media Player");
+    gtk_window_set_title(GTK_WINDOW(ui->window), "Shriek Media Player");
     gtk_window_set_default_size(GTK_WINDOW(ui->window), 1200, 700);
     gtk_window_set_icon_name(GTK_WINDOW(ui->window), "multimedia-player");
     
@@ -1211,8 +1211,8 @@ static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks) {
         gchar time_str[16];
         format_time(track->duration, time_str, sizeof(time_str));
         
-        /* GTK4: Create a BansheeTrackObject and append to GListStore */
-        BansheeTrackObject *track_obj = banshee_track_object_new(
+        /* GTK4: Create a ShriekTrackObject and append to GListStore */
+        ShriekTrackObject *track_obj = shriek_track_object_new(
             track->id,
             track->track_number,
             track->title,
@@ -1260,8 +1260,8 @@ void ui_show_radio_stations(MediaPlayerUI *ui) {
         
         gchar *bitrate_str = g_strdup_printf("%d kbps", station->bitrate);
         
-        /* GTK4: Create a BansheeTrackObject for radio station */
-        BansheeTrackObject *track_obj = banshee_track_object_new(
+        /* GTK4: Create a ShriekTrackObject for radio station */
+        ShriekTrackObject *track_obj = shriek_track_object_new(
             station->id,
             station_num++,
             station->name,
@@ -1299,10 +1299,10 @@ static void ui_play_selected_track(MediaPlayerUI *ui) {
     if (!ui || !ui->track_selection) return;
     
     /* GTK4: Get selected item from GtkSingleSelection */
-    BansheeTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
+    ShriekTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
     if (!track_obj) return;
     
-    gint track_id = banshee_track_object_get_id(track_obj);
+    gint track_id = shriek_track_object_get_id(track_obj);
     
     /* Hide video view if currently showing video (UI only, player will be reused) */
     if (ui->video_view && video_view_is_showing_video(ui->video_view)) {
@@ -1828,7 +1828,7 @@ void ui_show_preferences_dialog(MediaPlayerUI *ui) {
     GtkWidget *mins_label = gtk_label_new("min(s)");
     gtk_box_append(GTK_BOX(update_label_box), mins_label);
     
-    GtkWidget *help_label = gtk_label_new("Banshee will automatically check for new podcast episodes at this interval.\nMinimum: 15 minutes. Set to 0 hours 0 minutes to disable.");
+    GtkWidget *help_label = gtk_label_new("Shriek will automatically check for new podcast episodes at this interval.\nMinimum: 15 minutes. Set to 0 hours 0 minutes to disable.");
     gtk_label_set_wrap(GTK_LABEL(help_label), TRUE);
     gtk_widget_set_halign(help_label, GTK_ALIGN_START);
     gtk_widget_add_css_class(help_label, "dim-label");
@@ -1905,7 +1905,7 @@ void ui_show_preferences_dialog(MediaPlayerUI *ui) {
     gtk_box_append(GTK_BOX(video_row), video_browse_btn);
     
     /* Help text */
-    GtkWidget *watch_help = gtk_label_new("Banshee will scan these directories once at startup to import new media files.\nLeave empty to disable watching for that media type.");
+    GtkWidget *watch_help = gtk_label_new("Shriek will scan these directories once at startup to import new media files.\nLeave empty to disable watching for that media type.");
     gtk_label_set_wrap(GTK_LABEL(watch_help), TRUE);
     gtk_widget_set_halign(watch_help, GTK_ALIGN_START);
     gtk_widget_add_css_class(watch_help, "dim-label");
@@ -2010,9 +2010,9 @@ void ui_update_now_playing(MediaPlayerUI *ui) {
         ui_update_cover_art(ui, NULL, NULL, NULL);
     } else {
         /* Music track - get current selection using GTK4 */
-        BansheeTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
+        ShriekTrackObject *track_obj = gtk_single_selection_get_selected_item(ui->track_selection);
         if (track_obj) {
-            gint track_id = banshee_track_object_get_id(track_obj);
+            gint track_id = shriek_track_object_get_id(track_obj);
             
             Track *track = database_get_track(ui->database, track_id);
             if (track) {

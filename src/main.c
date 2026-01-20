@@ -6,8 +6,8 @@
 #include "ui.h"
 #include "playlist.h"
 
-#define APP_NAME "Banshee Media Player"
-#define APP_ID "org.gnome.Banshee"
+#define APP_NAME "Shriek Media Player"
+#define APP_ID "org.gnome.Shriek"
 #define VERSION "1.0.0"
 
 typedef struct {
@@ -122,7 +122,7 @@ static void on_activate(GtkApplication *gtk_app, gpointer user_data) {
     }
     
     /* Initialize database */
-    gchar *db_path = g_build_filename(g_get_user_data_dir(), "banshee", "library.db", NULL);
+    gchar *db_path = g_build_filename(g_get_user_data_dir(), "shriek", "library.db", NULL);
     gchar *db_dir = g_path_get_dirname(db_path);
     g_mkdir_with_parents(db_dir, 0755);
     g_free(db_dir);

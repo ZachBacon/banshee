@@ -1,6 +1,6 @@
-# Banshee
+# Shriek
 
-A modern, lightweight media player built in C using GTK3, GStreamer 1.0, and SQLite - inspired by the original Banshee Media Player.
+A modern, lightweight media player built in C using GTK3, GStreamer 1.0, and SQLite - inspired by the original Shriek Media Player.
 
 ![License](https://img.shields.io/badge/license-GPL3-blue.svg)
 
@@ -94,7 +94,7 @@ meson compile -C builddir
 sudo meson install -C builddir
 
 # Run
-./builddir/banshee
+./builddir/shriek
 ```
 
 ## Usage
@@ -104,20 +104,20 @@ sudo meson install -C builddir
 After building, you can run the application directly:
 
 ```bash
-./build/banshee
+./build/shriek
 ```
 
 Or if installed system-wide:
 
 ```bash
-banshee
+shriek
 ```
 
 ### Database Location
 
 The media library database is stored at:
 ```
-~/.local/share/banshee/library.db
+~/.local/share/shriek/library.db
 ```
 
 ### Adding Music
@@ -175,7 +175,7 @@ This project is open source and available under the MIT License.
 
 ## Acknowledgments
 
-- Inspired by the original Banshee Media Player
+- Inspired by the original Shriek Media Player
 - Built with GTK, GStreamer, and SQLite
 - Uses standard Linux development tools
 

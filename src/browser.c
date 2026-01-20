@@ -16,9 +16,9 @@ static void bind_name_label(GtkSignalListItemFactory *factory, GtkListItem *list
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeBrowserItem *item = gtk_list_item_get_item(list_item);
+    ShriekBrowserItem *item = gtk_list_item_get_item(list_item);
     if (item) {
-        gtk_label_set_text(GTK_LABEL(label), banshee_browser_item_get_name(item));
+        gtk_label_set_text(GTK_LABEL(label), shriek_browser_item_get_name(item));
     }
 }
 
@@ -35,9 +35,9 @@ static void bind_count_label(GtkSignalListItemFactory *factory, GtkListItem *lis
     (void)factory;
     (void)user_data;
     GtkWidget *label = gtk_list_item_get_child(list_item);
-    BansheeBrowserItem *item = gtk_list_item_get_item(list_item);
+    ShriekBrowserItem *item = gtk_list_item_get_item(list_item);
     if (item) {
-        gint count = banshee_browser_item_get_count(item);
+        gint count = shriek_browser_item_get_count(item);
         if (count > 0) {
             gchar *text = g_strdup_printf("%d", count);
             gtk_label_set_text(GTK_LABEL(label), text);
@@ -54,8 +54,8 @@ BrowserModel* browser_model_new(BrowserType type, Database *database) {
     model->database = database;
     model->current_filter = NULL;
     
-    /* GTK4: Use GListStore with BansheeBrowserItem GObjects */
-    model->store = g_list_store_new(BANSHEE_TYPE_BROWSER_ITEM);
+    /* GTK4: Use GListStore with ShriekBrowserItem GObjects */
+    model->store = g_list_store_new(SHRIEK_TYPE_BROWSER_ITEM);
     
     browser_model_reload(model);
     return model;
@@ -77,7 +77,7 @@ void browser_model_reload(BrowserModel *model) {
     g_list_store_remove_all(model->store);
     
     /* Add "All" item first */
-    BansheeBrowserItem *all_item = banshee_browser_item_new(0, "All", 0);
+    ShriekBrowserItem *all_item = shriek_browser_item_new(0, "All", 0);
     g_list_store_append(model->store, all_item);
     g_object_unref(all_item);
     
@@ -131,7 +131,7 @@ void browser_model_reload(BrowserModel *model) {
             const gchar *name = (const gchar *)sqlite3_column_text(stmt, 0);
             gint count = sqlite3_column_int(stmt, 1);
             
-            BansheeBrowserItem *item = banshee_browser_item_new(g_str_hash(name), name, count);
+            ShriekBrowserItem *item = shriek_browser_item_new(g_str_hash(name), name, count);
             g_list_store_append(model->store, item);
             g_object_unref(item);
         }
@@ -151,10 +151,10 @@ gchar* browser_model_get_selected_name(BrowserModel *model, GtkSingleSelection *
     (void)model;
     if (!selection) return NULL;
     
-    BansheeBrowserItem *item = gtk_single_selection_get_selected_item(selection);
+    ShriekBrowserItem *item = gtk_single_selection_get_selected_item(selection);
     if (!item) return NULL;
     
-    const gchar *name = banshee_browser_item_get_name(item);
+    const gchar *name = shriek_browser_item_get_name(item);
     if (g_strcmp0(name, "All") == 0) {
         return NULL;
     }
