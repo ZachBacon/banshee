@@ -6,7 +6,7 @@ A modern, lightweight media player built in C using GTK3, GStreamer 1.0, and SQL
 
 ## Features
 
-- **Modern GTK3 Interface** - Clean and intuitive user interface
+- **Modern GTK4 Interface** - Clean and intuitive user interface
 - **GStreamer 1.0 Playback** - Support for various audio and video formats
 - **SQLite Database** - Fast and efficient media library management
 - **Playlist Management** - Create, edit, and organize playlists
@@ -30,7 +30,7 @@ The application is organized into modular components:
 
 ### Required Libraries
 
-- **GTK+ 3.0** (>= 3.22) - GUI toolkit
+- **GTK4** (>= 4.20) - GUI toolkit
 - **GStreamer 1.0** (>= 1.14) - Multimedia framework
 - **GLib 2.0** (>= 2.56) - Core application library
 - **SQLite 3** (>= 3.22) - Database engine
@@ -40,7 +40,7 @@ The application is organized into modular components:
 ```bash
 sudo apt-get update
 sudo apt-get install build-essential pkg-config
-sudo apt-get install libgtk-3-dev libgstreamer1.0-dev libglib2.0-dev libsqlite3-dev
+sudo apt-get install libgtk-4-dev libgstreamer1.0-dev libglib2.0-dev libsqlite3-dev
 sudo apt-get install gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly
 ```
 
@@ -48,7 +48,7 @@ sudo apt-get install gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstream
 
 ```bash
 sudo dnf install gcc make pkg-config
-sudo dnf install gtk3-devel gstreamer1-devel glib2-devel sqlite-devel
+sudo dnf install gtk4-devel gstreamer1-devel glib2-devel sqlite-devel
 sudo dnf install gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly-free
 ```
 
@@ -56,7 +56,7 @@ sudo dnf install gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plug
 
 ```bash
 sudo pacman -S base-devel pkg-config
-sudo pacman -S gtk3 gstreamer glib2 sqlite
+sudo pacman -S gtk4 gstreamer glib2 sqlite
 sudo pacman -S gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly
 ```
 

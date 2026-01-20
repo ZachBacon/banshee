@@ -105,7 +105,7 @@ static void cleanup_application(Application *app) {
         database_free(app->database);
     }
     
-    g_free(app);
+    /* Note: gtk_app and app are freed in main() after g_application_run returns */
 }
 
 static void on_activate(GtkApplication *gtk_app, gpointer user_data) {
@@ -194,6 +194,7 @@ int main(int argc, char *argv[]) {
     int status = g_application_run(G_APPLICATION(app->gtk_app), argc, argv);
     
     g_object_unref(app->gtk_app);
+    g_free(app);
     
     return status;
 }
