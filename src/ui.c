@@ -1619,9 +1619,10 @@ static void on_prefs_dialog_response(GtkWidget *button, PrefsDialogData *data) {
         gint mins = (gint)gtk_spin_button_get_value(GTK_SPIN_BUTTON(data->mins_spin));
         gint total_minutes = hours * 60 + mins;
         
-        /* Enforce minimum of 15 minutes (unless disabled with 0) */
-        if (total_minutes > 0 && total_minutes < 15) {
-            total_minutes = 15;
+        /* Enforce minimum of 5 minutes (unless disabled with 0) */
+        if (total_minutes > 0 && total_minutes < 5) {
+            total_minutes = 5;
+            g_print("Note: Minimum update interval is 5 minutes\n");
         }
         
         gchar *minutes_str = g_strdup_printf("%d", total_minutes);
@@ -1828,7 +1829,7 @@ void ui_show_preferences_dialog(MediaPlayerUI *ui) {
     GtkWidget *mins_label = gtk_label_new("min(s)");
     gtk_box_append(GTK_BOX(update_label_box), mins_label);
     
-    GtkWidget *help_label = gtk_label_new("Shriek will automatically check for new podcast episodes at this interval.\nMinimum: 15 minutes. Set to 0 hours 0 minutes to disable.");
+    GtkWidget *help_label = gtk_label_new("Shriek will automatically check for new podcast episodes at this interval.\nMinimum: 5 minutes. Set to 0 hours 0 minutes to disable.");
     gtk_label_set_wrap(GTK_LABEL(help_label), TRUE);
     gtk_widget_set_halign(help_label, GTK_ALIGN_START);
     gtk_widget_add_css_class(help_label, "dim-label");

@@ -1392,11 +1392,17 @@ gboolean podcast_manager_is_updating(PodcastManager *manager) {
 static gboolean podcast_update_timer_callback(gpointer user_data) {
     PodcastManager *manager = (PodcastManager *)user_data;
     
+    g_print("Podcast auto-update timer triggered\n");
+    
     if (manager && manager->podcasts) {
+        g_print("Starting automatic feed update for %d podcast(s)\n", g_list_length(manager->podcasts));
         podcast_manager_update_all_feeds(manager);
+    } else {
+        g_print("No podcasts to update (manager=%p, podcasts=%p)\n", 
+                (void*)manager, manager ? (void*)manager->podcasts : NULL);
     }
     
-    return TRUE;  /* Continue timer */
+    return G_SOURCE_CONTINUE;  /* Continue timer */
 }
 
 /* Start automatic feed update timer */
@@ -1420,6 +1426,11 @@ void podcast_manager_start_auto_update(PodcastManager *manager, gint interval_mi
             podcast_update_timer_callback,
             manager
         );
+        
+        g_print("Podcast auto-update timer started (id=%u, next check in %u seconds)\n", 
+                manager->update_timer_id, interval_seconds);
+    } else {
+        g_print("Podcast auto-update disabled\n");
     }
 }
 
