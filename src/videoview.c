@@ -282,32 +282,6 @@ static GtkWidget* create_video_controls(VideoView *view) {
     return view->controls_revealer;
 }
 
-/* Frame monitoring */
-static guint frame_count = 0;
-static GTimer *frame_timer = NULL;
-
-static gboolean on_frame_rendered(GtkWidget *widget, GdkFrameClock *clock, gpointer user_data) {
-    (void)widget;
-    (void)clock;
-    (void)user_data;
-    
-    frame_count++;
-    
-    if (!frame_timer) {
-        frame_timer = g_timer_new();
-    }
-    
-    gdouble elapsed = g_timer_elapsed(frame_timer, NULL);
-    if (elapsed >= 1.0) {
-        g_print("Video: Rendered %u frames in %.2f seconds (%.1f fps)\n", 
-                frame_count, elapsed, frame_count / elapsed);
-        frame_count = 0;
-        g_timer_reset(frame_timer);
-    }
-    
-    return G_SOURCE_CONTINUE;
-}
-
 /* Callback when gtksink widget becomes available */
 static void on_video_widget_ready(GtkWidget *widget, gpointer user_data) {
     VideoView *view = (VideoView *)user_data;

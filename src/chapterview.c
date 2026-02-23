@@ -100,12 +100,14 @@ ChapterView* chapter_view_new(void) {
     /* GTK4: Create GListStore for chapters */
     view->store = g_list_store_new(SHRIEK_TYPE_CHAPTER_OBJECT);
     
-    /* Create selection model */
-    view->selection = gtk_single_selection_new(G_LIST_MODEL(view->store));
+    /* Create selection model — gtk_single_selection_new() takes ownership (transfer-full),
+       so ref the store again so we can use and unref it ourselves in chapter_view_free */
+    view->selection = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(view->store)));
     gtk_single_selection_set_autoselect(view->selection, FALSE);
     
-    /* Create GtkColumnView */
-    view->columnview = gtk_column_view_new(GTK_SELECTION_MODEL(view->selection));
+    /* Create GtkColumnView — gtk_column_view_new() takes ownership (transfer-full),
+       so ref the selection again so we can use and unref it ourselves in chapter_view_free */
+    view->columnview = gtk_column_view_new(GTK_SELECTION_MODEL(g_object_ref(view->selection)));
     gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(view->columnview), FALSE);
     gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(view->columnview), FALSE);
     

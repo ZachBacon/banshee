@@ -5,8 +5,20 @@
 
 G_DEFINE_TYPE(AlbumItem, album_item, G_TYPE_OBJECT)
 
+/* Weak notify callback to NULL out stale picture pointer */
+static void on_picture_widget_destroyed(gpointer data, GObject *where_the_object_was) {
+    AlbumItem *item = ALBUM_ITEM(data);
+    (void)where_the_object_was;
+    item->picture = NULL;
+}
+
 static void album_item_finalize(GObject *object) {
     AlbumItem *item = ALBUM_ITEM(object);
+    /* Remove weak ref before freeing */
+    if (item->picture) {
+        g_object_weak_unref(G_OBJECT(item->picture), on_picture_widget_destroyed, item);
+        item->picture = NULL;
+    }
     g_free(item->artist);
     g_free(item->album);
     g_clear_object(&item->cover);
@@ -136,8 +148,12 @@ static void bind_album_item(GtkListItemFactory *factory, GtkListItem *list_item,
     GtkWidget *picture = gtk_widget_get_first_child(box);
     GtkWidget *label = gtk_widget_get_next_sibling(picture);
     
-    /* Store reference to picture widget for async cover art updates */
+    /* Store reference to picture widget for async cover art updates (weak ref) */
+    if (item->picture) {
+        g_object_weak_unref(G_OBJECT(item->picture), on_picture_widget_destroyed, item);
+    }
     item->picture = picture;
+    g_object_weak_ref(G_OBJECT(picture), on_picture_widget_destroyed, item);
     g_debug("bind_album_item: Stored picture reference for %s", item->album ? item->album : "Unknown");
     
     /* Set the cover art */
@@ -159,7 +175,8 @@ static void unbind_album_item(GtkListItemFactory *factory, GtkListItem *list_ite
     
     /* Clear the picture reference when item is unbound */
     AlbumItem *item = gtk_list_item_get_item(list_item);
-    if (item) {
+    if (item && item->picture) {
+        g_object_weak_unref(G_OBJECT(item->picture), on_picture_widget_destroyed, item);
         item->picture = NULL;
         g_debug("unbind_album_item: Cleared picture reference for %s", item->album ? item->album : "Unknown");
     }

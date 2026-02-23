@@ -14,6 +14,7 @@
 #include "transcriptview.h"
 #include "videoview.h"
 #include "models.h"
+#include "radio.h"
 
 /* Repeat mode enumeration */
 typedef enum {
@@ -107,6 +108,13 @@ typedef struct {
     /* Signal handlers */
     gulong track_selection_handler_id;
     gulong seek_handler_id;
+    
+    /* Radio stream tuner bar */
+    GtkWidget *radio_bar;              /* Container shown above track list in radio mode */
+    GtkWidget *radio_dir_dropdown;     /* Directory selector: My Stations / Shoutcast / Icecast / iHeartRadio */
+    GtkWidget *radio_sub_dropdown;     /* Secondary: genre (Shoutcast) or market (iHeartRadio) */
+    GList     *ihr_cached_markets;     /* Cached IHRMarket* list for iHeartRadio */
+    StreamTunerType radio_current_dir; /* Currently selected directory */
 } MediaPlayerUI;
 
 /* UI initialization */

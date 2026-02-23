@@ -97,16 +97,18 @@ gchar* smartplaylist_build_sql(SmartPlaylist *playlist) {
             const gchar *column = field_to_column(cond->field);
             const gchar *op = op_to_sql(cond->op);
             
+            /* Use ? placeholders to prevent SQL injection */
             if (cond->op == QUERY_OP_CONTAINS || cond->op == QUERY_OP_NOT_CONTAINS) {
-                g_string_append_printf(sql, "%s %s '%%%s%%'", column, op, cond->value);
+                g_string_append_printf(sql, "%s %s ?", column, op);
             } else if (cond->op == QUERY_OP_STARTS_WITH) {
-                g_string_append_printf(sql, "%s LIKE '%s%%'", column, cond->value);
+                g_string_append_printf(sql, "%s LIKE ?", column);
             } else {
-                g_string_append_printf(sql, "%s %s '%s'", column, op, cond->value);
+                g_string_append_printf(sql, "%s %s ?", column, op);
             }
         }
     }
     
+    /* order_by is from a controlled set (field_to_column), not user input */
     if (playlist->order_by) {
         g_string_append_printf(sql, " ORDER BY %s %s",
                               playlist->order_by,
@@ -130,6 +132,23 @@ GList* smartplaylist_get_tracks(SmartPlaylist *playlist, Database *db) {
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        /* Bind condition values as parameters */
+        gint param_index = 1;
+        for (GList *l = playlist->conditions; l != NULL; l = l->next) {
+            QueryCondition *cond = (QueryCondition *)l->data;
+            
+            if (cond->op == QUERY_OP_CONTAINS || cond->op == QUERY_OP_NOT_CONTAINS) {
+                gchar *like_val = g_strdup_printf("%%%s%%", cond->value);
+                sqlite3_bind_text(stmt, param_index, like_val, -1, g_free);
+            } else if (cond->op == QUERY_OP_STARTS_WITH) {
+                gchar *like_val = g_strdup_printf("%s%%", cond->value);
+                sqlite3_bind_text(stmt, param_index, like_val, -1, g_free);
+            } else {
+                sqlite3_bind_text(stmt, param_index, cond->value, -1, SQLITE_TRANSIENT);
+            }
+            param_index++;
+        }
+        
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             /* Read columns matching the explicit SELECT statement */
             Track *track = g_new0(Track, 1);
@@ -146,13 +165,13 @@ GList* smartplaylist_get_tracks(SmartPlaylist *playlist, Database *db) {
             track->date_added = sqlite3_column_int64(stmt, 9);
             track->last_played = sqlite3_column_int64(stmt, 10);
             
-            tracks = g_list_append(tracks, track);
+            tracks = g_list_prepend(tracks, track);
         }
         sqlite3_finalize(stmt);
     }
     
     g_free(sql);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 SmartPlaylist* smartplaylist_create_favorites(void) {
@@ -208,11 +227,11 @@ SmartPlaylist* smartplaylist_load_from_db(gint playlist_id, Database *db) {
 GList* smartplaylist_get_all_from_db(Database *db) {
     /* Simplified - would return list of all smart playlists */
     GList *playlists = NULL;
-    playlists = g_list_append(playlists, smartplaylist_create_favorites());
-    playlists = g_list_append(playlists, smartplaylist_create_recently_added());
-    playlists = g_list_append(playlists, smartplaylist_create_recently_played());
-    playlists = g_list_append(playlists, smartplaylist_create_never_played());
-    playlists = g_list_append(playlists, smartplaylist_create_most_played());
+    playlists = g_list_prepend(playlists, smartplaylist_create_most_played());
+    playlists = g_list_prepend(playlists, smartplaylist_create_never_played());
+    playlists = g_list_prepend(playlists, smartplaylist_create_recently_played());
+    playlists = g_list_prepend(playlists, smartplaylist_create_recently_added());
+    playlists = g_list_prepend(playlists, smartplaylist_create_favorites());
     return playlists;
 }
 

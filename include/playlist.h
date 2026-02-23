@@ -7,6 +7,7 @@
 typedef struct {
     GList *tracks;
     gint current_index;
+    gint count;         /* Cached track count (avoids O(n) g_list_length calls) */
     gboolean shuffle;
     gboolean repeat;
 } PlaylistManager;

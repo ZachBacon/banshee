@@ -23,7 +23,7 @@ check_dependency() {
     fi
 }
 
-check_dependency "gtk+-3.0"
+check_dependency "gtk4"
 check_dependency "gstreamer-1.0"
 check_dependency "glib-2.0"
 check_dependency "sqlite3"

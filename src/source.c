@@ -33,6 +33,7 @@ void source_add_child(Source *parent, Source *child) {
     if (!parent || !child) return;
     
     child->parent = parent;
+    /* g_list_append is acceptable here: child lists are small and order matters */
     parent->children = g_list_append(parent->children, child);
 }
 
@@ -111,9 +112,7 @@ Source* source_create_music_library(Database *db) {
     music->media_types = MEDIA_TYPE_AUDIO;
     
     if (db) {
-        GList *tracks = database_get_all_tracks(db);
-        music->count = g_list_length(tracks);
-        g_list_free_full(tracks, (GDestroyNotify)database_free_track);
+        music->count = database_get_audio_track_count(db);
     }
     
     return music;
@@ -151,18 +150,11 @@ Source* source_create_podcast(Database *db) {
     return podcast;
 }
 
-Source* source_create_audiobook(Database *db) {
-    Source *audiobook = source_new("Audiobooks", SOURCE_TYPE_AUDIOBOOK);
-    audiobook->icon_name = g_strdup("book");
-    audiobook->media_types = MEDIA_TYPE_AUDIO;
-    audiobook->count = 0;
-    
-    return audiobook;
-}
 
 void source_manager_add_source(SourceManager *manager, Source *source) {
     if (!manager || !source) return;
     
+    /* g_list_append is acceptable here: source lists are small and sidebar order matters */
     manager->sources = g_list_append(manager->sources, source);
     source_manager_populate(manager);
 }
@@ -231,10 +223,6 @@ void source_manager_add_default_sources(SourceManager *manager) {
     /* Podcasts */
     Source *podcasts = source_create_podcast(manager->db);
     source_manager_add_source(manager, podcasts);
-    
-    /* Audiobooks */
-    Source *audiobooks = source_create_audiobook(manager->db);
-    source_manager_add_source(manager, audiobooks);
     
     /* Videos */
     Source *videos = source_create_video_library(manager->db);

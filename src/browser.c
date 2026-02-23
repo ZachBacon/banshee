@@ -81,62 +81,30 @@ void browser_model_reload(BrowserModel *model) {
     g_list_store_append(model->store, all_item);
     g_object_unref(all_item);
     
-    const char *sql = NULL;
+    GList *results = NULL;
     switch (model->type) {
         case BROWSER_TYPE_ARTIST:
-            sql = "SELECT DISTINCT Artist, COUNT(*) FROM tracks WHERE Artist IS NOT NULL AND Artist != '' AND ("
-                  "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                  "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                  "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                  "LOWER(file_path) LIKE '%.mpc') GROUP BY Artist ORDER BY Artist";
+            results = database_browse_artists(model->database);
             break;
         case BROWSER_TYPE_ALBUM:
-            sql = model->current_filter
-                ? "SELECT DISTINCT Album, COUNT(*) FROM tracks WHERE Album IS NOT NULL AND Album != '' AND Artist = ? AND ("
-                  "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                  "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                  "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                  "LOWER(file_path) LIKE '%.mpc') GROUP BY Album ORDER BY Album"
-                : "SELECT DISTINCT Album, COUNT(*) FROM tracks WHERE Album IS NOT NULL AND Album != '' AND ("
-                  "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                  "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                  "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                  "LOWER(file_path) LIKE '%.mpc') GROUP BY Album ORDER BY Album";
+            results = database_browse_albums(model->database, model->current_filter);
             break;
         case BROWSER_TYPE_GENRE:
-            sql = "SELECT DISTINCT Genre, COUNT(*) FROM tracks WHERE Genre IS NOT NULL AND Genre != '' AND ("
-                  "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                  "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                  "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                  "LOWER(file_path) LIKE '%.mpc') GROUP BY Genre ORDER BY Genre";
+            results = database_browse_genres(model->database);
             break;
         case BROWSER_TYPE_YEAR:
-            sql = "SELECT DISTINCT CAST(Year AS TEXT), COUNT(*) FROM tracks WHERE Year > 0 AND ("
-                  "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                  "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                  "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                  "LOWER(file_path) LIKE '%.mpc') GROUP BY Year ORDER BY Year DESC";
+            results = database_browse_years(model->database);
             break;
     }
     
-    if (!sql) return;
-    
-    sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(model->database->db, sql, -1, &stmt, NULL) == SQLITE_OK) {
-        if (model->current_filter && model->type == BROWSER_TYPE_ALBUM) {
-            sqlite3_bind_text(stmt, 1, model->current_filter, -1, SQLITE_TRANSIENT);
-        }
-        
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const gchar *name = (const gchar *)sqlite3_column_text(stmt, 0);
-            gint count = sqlite3_column_int(stmt, 1);
-            
-            ShriekBrowserItem *item = shriek_browser_item_new(g_str_hash(name), name, count);
-            g_list_store_append(model->store, item);
-            g_object_unref(item);
-        }
-        sqlite3_finalize(stmt);
+    for (GList *l = results; l != NULL; l = l->next) {
+        DatabaseBrowseResult *r = (DatabaseBrowseResult *)l->data;
+        ShriekBrowserItem *item = shriek_browser_item_new(g_str_hash(r->name), r->name, r->count);
+        g_list_store_append(model->store, item);
+        g_object_unref(item);
     }
+    
+    g_list_free_full(results, (GDestroyNotify)database_browse_result_free);
 }
 
 void browser_model_set_filter(BrowserModel *model, const gchar *filter) {
@@ -247,83 +215,15 @@ GtkSingleSelection* browser_view_get_selection_model(BrowserView *view) {
 }
 
 GList* browser_get_artists(Database *db) {
-    if (!db || !db->db) return NULL;
-    
-    const char *sql = "SELECT DISTINCT Artist FROM tracks WHERE Artist IS NOT NULL AND Artist != '' AND ("
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
-                      "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
-                      "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
-                      "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') "
-                      "ORDER BY Artist";
-    sqlite3_stmt *stmt;
-    GList *list = NULL;
-    
-    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) == SQLITE_OK) {
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const gchar *artist = (const gchar *)sqlite3_column_text(stmt, 0);
-            list = g_list_append(list, g_strdup(artist));
-        }
-        sqlite3_finalize(stmt);
-    }
-    return list;
+    return database_get_distinct_artists(db);
 }
 
 GList* browser_get_albums(Database *db, const gchar *artist_filter) {
-    if (!db || !db->db) return NULL;
-    
-    const char *sql = artist_filter
-        ? "SELECT DISTINCT Album FROM tracks WHERE Album IS NOT NULL AND Album != '' AND Artist = ? AND ("
-          "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
-          "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
-          "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-          "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
-          "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY Album"
-        : "SELECT DISTINCT Album FROM tracks WHERE Album IS NOT NULL AND Album != '' AND ("
-          "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
-          "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
-          "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-          "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
-          "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY Album";
-    
-    sqlite3_stmt *stmt;
-    GList *list = NULL;
-    
-    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) == SQLITE_OK) {
-        if (artist_filter) {
-            sqlite3_bind_text(stmt, 1, artist_filter, -1, SQLITE_TRANSIENT);
-        }
-        
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const gchar *album = (const gchar *)sqlite3_column_text(stmt, 0);
-            list = g_list_append(list, g_strdup(album));
-        }
-        sqlite3_finalize(stmt);
-    }
-    return list;
+    return database_get_distinct_albums(db, artist_filter);
 }
 
 GList* browser_get_genres(Database *db) {
-    if (!db || !db->db) return NULL;
-    
-    const char *sql = "SELECT DISTINCT Genre FROM tracks WHERE Genre IS NOT NULL AND Genre != '' AND ("
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
-                      "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
-                      "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
-                      "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') "
-                      "ORDER BY Genre";
-    sqlite3_stmt *stmt;
-    GList *list = NULL;
-    
-    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) == SQLITE_OK) {
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const gchar *genre = (const gchar *)sqlite3_column_text(stmt, 0);
-            list = g_list_append(list, g_strdup(genre));
-        }
-        sqlite3_finalize(stmt);
-    }
-    return list;
+    return database_get_distinct_genres(db);
 }
 
 void browser_item_free(BrowserItem *item) {

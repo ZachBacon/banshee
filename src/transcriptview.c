@@ -159,7 +159,7 @@ static GList* parse_simple_json_transcript(const gchar *json_data) {
                         segment->end_time = 0.0;
                         segment->text = text;
                         
-                        segments = g_list_append(segments, segment);
+                        segments = g_list_prepend(segments, segment);
                     }
                 }
             }
@@ -167,7 +167,7 @@ static GList* parse_simple_json_transcript(const gchar *json_data) {
     }
     
     g_strfreev(lines);
-    return segments;
+    return g_list_reverse(segments);
 }
 
 static gchar* parse_webvtt_transcript(const gchar *vtt_data) {

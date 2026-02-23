@@ -13,7 +13,6 @@ typedef enum {
     SOURCE_TYPE_RADIO,
     SOURCE_TYPE_PODCAST,
     SOURCE_TYPE_DEVICE,
-    SOURCE_TYPE_AUDIOBOOK,
     SOURCE_TYPE_QUEUE
 } SourceType;
 
@@ -22,8 +21,7 @@ typedef enum {
     MEDIA_TYPE_AUDIO = 1 << 0,
     MEDIA_TYPE_VIDEO = 1 << 1,
     MEDIA_TYPE_PODCAST = 1 << 2,
-    MEDIA_TYPE_AUDIOBOOK = 1 << 3,
-    MEDIA_TYPE_RADIO = 1 << 4
+    MEDIA_TYPE_RADIO = 1 << 3
 } MediaType;
 
 /* Source structure */

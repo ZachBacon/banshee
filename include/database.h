@@ -42,6 +42,11 @@ Database* database_new(const gchar *db_path);
 void database_free(Database *db);
 gboolean database_init_tables(Database *db);
 
+/* Transaction helpers */
+gboolean database_begin_transaction(Database *db);
+gboolean database_commit_transaction(Database *db);
+gboolean database_rollback_transaction(Database *db);
+
 /* Track operations */
 gint database_add_track(Database *db, Track *track);
 Track* database_get_track(Database *db, gint track_id);
@@ -122,5 +127,37 @@ gdouble database_get_preference_double(Database *db, const gchar *key, gdouble d
 /* Cleanup helpers */
 void database_free_playlist(Playlist *playlist);
 void database_free_track(Track *track);
+
+/* Audio extension filter (shared SQL fragment) */
+#define AUDIO_EXT_FILTER \
+    "(LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR " \
+    "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR " \
+    "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR " \
+    "LOWER(file_path) LIKE '%.mpc')"
+
+#define VIDEO_EXT_FILTER \
+    "(LOWER(file_path) LIKE '%.mp4' OR LOWER(file_path) LIKE '%.mkv' OR LOWER(file_path) LIKE '%.avi' OR " \
+    "LOWER(file_path) LIKE '%.mov' OR LOWER(file_path) LIKE '%.wmv' OR LOWER(file_path) LIKE '%.flv' OR " \
+    "LOWER(file_path) LIKE '%.webm' OR LOWER(file_path) LIKE '%.m4v' OR LOWER(file_path) LIKE '%.mpg' OR " \
+    "LOWER(file_path) LIKE '%.mpeg' OR LOWER(file_path) LIKE '%.3gp' OR LOWER(file_path) LIKE '%.ogv' OR " \
+    "LOWER(file_path) LIKE '%.ts' OR LOWER(file_path) LIKE '%.m2ts' OR LOWER(file_path) LIKE '%.vob' OR " \
+    "LOWER(file_path) LIKE '%.divx' OR LOWER(file_path) LIKE '%.xvid' OR LOWER(file_path) LIKE '%.asf' OR " \
+    "LOWER(file_path) LIKE '%.rm' OR LOWER(file_path) LIKE '%.rmvb')"
+
+/* Browse query result (name + count pair) */
+typedef struct {
+    gchar *name;
+    gint count;
+} DatabaseBrowseResult;
+
+/* Browse query functions (used by browser panel) */
+GList* database_browse_artists(Database *db);
+GList* database_browse_albums(Database *db, const gchar *artist_filter);
+GList* database_browse_genres(Database *db);
+GList* database_browse_years(Database *db);
+GList* database_get_distinct_artists(Database *db);
+GList* database_get_distinct_albums(Database *db, const gchar *artist_filter);
+GList* database_get_distinct_genres(Database *db);
+void database_browse_result_free(DatabaseBrowseResult *result);
 
 #endif /* DATABASE_H */

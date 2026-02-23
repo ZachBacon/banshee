@@ -82,6 +82,9 @@ typedef struct {
     gpointer seek_callback_data;
     
     gint selected_podcast_id;
+    
+    /* Flags for async safety */
+    gboolean destroyed;  /* Set when view is being freed; checked by async callbacks */
 } PodcastView;
 
 void podcast_view_set_play_callback(PodcastView *view, EpisodePlayCallback callback, gpointer user_data);

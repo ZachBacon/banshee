@@ -1252,6 +1252,12 @@ PodcastView* podcast_view_new(PodcastManager *manager, Database *database) {
 void podcast_view_free(PodcastView *view) {
     if (!view) return;
     
+    /* Mark as destroyed so pending async callbacks know not to touch the view */
+    view->destroyed = TRUE;
+    
+    /* Cancel any active download */
+    view->current_download_id = -1;
+    
     /* Clean up episode-specific data */
     if (view->current_chapters) {
         g_list_free_full(view->current_chapters, (GDestroyNotify)podcast_chapter_free);
@@ -1536,10 +1542,11 @@ typedef struct {
 static gboolean update_progress_ui(gpointer user_data) {
     ProgressUpdate *update = (ProgressUpdate *)user_data;
     
-    if (update->view && update->view->current_download_id == update->episode_id) {
+    if (update->view && !update->view->destroyed && update->view->current_download_id == update->episode_id) {
         gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(update->view->progress_bar), update->progress);
-        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(update->view->progress_bar), 
-                                 g_strdup_printf("%.0f%%", update->progress * 100));
+        gchar *progress_text = g_strdup_printf("%.0f%%", update->progress * 100);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(update->view->progress_bar), progress_text);
+        g_free(progress_text);
         if (update->status) {
             gtk_label_set_text(GTK_LABEL(update->view->progress_label), update->status);
         }
@@ -1582,7 +1589,7 @@ typedef struct {
 static gboolean update_complete_ui(gpointer user_data) {
     CompleteUpdate *update = (CompleteUpdate *)user_data;
     
-    if (update->view && update->view->current_download_id == update->episode_id) {
+    if (update->view && !update->view->destroyed && update->view->current_download_id == update->episode_id) {
         if (update->success) {
             gtk_label_set_text(GTK_LABEL(update->view->progress_label), "Download complete!");
             gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(update->view->progress_bar), 1.0);

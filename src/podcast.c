@@ -1786,7 +1786,7 @@ static GList* parse_chapters_json(const gchar *json_data) {
             chapter->url = g_strdup(url);
         }
         
-        chapters = g_list_append(chapters, chapter);
+        chapters = g_list_prepend(chapters, chapter);
         
         if (chapter->title) {
             g_debug("  Chapter %u: %.0fs - %s", i, chapter->start_time, chapter->title);
@@ -1794,7 +1794,7 @@ static GList* parse_chapters_json(const gchar *json_data) {
     }
     
     g_object_unref(parser);
-    return chapters;
+    return g_list_reverse(chapters);
 }
 
 GList* podcast_episode_get_chapters(PodcastManager *manager, gint episode_id) {

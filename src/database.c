@@ -199,6 +199,9 @@ Database* database_new(const gchar *db_path) {
         return NULL;
     }
     
+    /* Enable foreign key enforcement */
+    sqlite3_exec(db->db, "PRAGMA foreign_keys = ON;", NULL, NULL, NULL);
+    
     return db;
 }
 
@@ -211,6 +214,42 @@ void database_free(Database *db) {
     
     g_free(db->db_path);
     g_free(db);
+}
+
+gboolean database_begin_transaction(Database *db) {
+    if (!db || !db->db) return FALSE;
+    char *err_msg = NULL;
+    int rc = sqlite3_exec(db->db, "BEGIN TRANSACTION;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_warning("Failed to begin transaction: %s", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+gboolean database_commit_transaction(Database *db) {
+    if (!db || !db->db) return FALSE;
+    char *err_msg = NULL;
+    int rc = sqlite3_exec(db->db, "COMMIT;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_warning("Failed to commit transaction: %s", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+gboolean database_rollback_transaction(Database *db) {
+    if (!db || !db->db) return FALSE;
+    char *err_msg = NULL;
+    int rc = sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        g_warning("Failed to rollback transaction: %s", err_msg);
+        sqlite3_free(err_msg);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 gboolean database_init_tables(Database *db) {
@@ -422,11 +461,8 @@ GList* database_get_all_tracks(Database *db) {
     /* Get only audio files from tracks table (positive filter for audio extensions) */
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE "
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                      "LOWER(file_path) LIKE '%.mpc' "
-                      "ORDER BY artist, album, track_number, title;";
+                      AUDIO_EXT_FILTER
+                      " ORDER BY artist, album, track_number, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -449,21 +485,18 @@ GList* database_get_all_tracks(Database *db) {
         track->play_count = sqlite3_column_int(stmt, 8);
         track->date_added = sqlite3_column_int64(stmt, 9);
         
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 gint database_get_audio_track_count(Database *db) {
     if (!db || !db->db) return 0;
     
     const char *sql = "SELECT COUNT(*) FROM tracks WHERE "
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                      "LOWER(file_path) LIKE '%.mpc';";
+                      AUDIO_EXT_FILTER ";";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -485,11 +518,8 @@ GList* database_get_tracks_by_artist(Database *db, const gchar *artist) {
     if (!db || !db->db || !artist) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
-                      "FROM tracks WHERE artist = ? AND ("
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                      "LOWER(file_path) LIKE '%.mpc') ORDER BY album, track_number, title;";
+                      "FROM tracks WHERE artist = ? AND "
+                      AUDIO_EXT_FILTER " ORDER BY album, track_number, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -513,11 +543,11 @@ GList* database_get_tracks_by_artist(Database *db, const gchar *artist) {
         track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
         track->play_count = sqlite3_column_int(stmt, 8);
         track->date_added = sqlite3_column_int64(stmt, 9);
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 GList* database_get_tracks_by_album(Database *db, const gchar *artist, const gchar *album) {
@@ -525,17 +555,11 @@ GList* database_get_tracks_by_album(Database *db, const gchar *artist, const gch
     
     const char *sql = artist ? 
         "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
-        "FROM tracks WHERE artist = ? AND album = ? AND ("
-        "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-        "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-        "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-        "LOWER(file_path) LIKE '%.mpc') ORDER BY track_number, title;" :
+        "FROM tracks WHERE artist = ? AND album = ? AND "
+        AUDIO_EXT_FILTER " ORDER BY track_number, title;" :
         "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
-        "FROM tracks WHERE album = ? AND ("
-        "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-        "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-        "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-        "LOWER(file_path) LIKE '%.mpc') ORDER BY track_number, title;";
+        "FROM tracks WHERE album = ? AND "
+        AUDIO_EXT_FILTER " ORDER BY track_number, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -564,11 +588,11 @@ GList* database_get_tracks_by_album(Database *db, const gchar *artist, const gch
         track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
         track->play_count = sqlite3_column_int(stmt, 8);
         track->date_added = sqlite3_column_int64(stmt, 9);
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 typedef struct {
@@ -580,18 +604,10 @@ GList* database_get_albums_by_artist(Database *db, const gchar *artist) {
     if (!db || !db->db) return NULL;
     
     const char *sql = artist ? 
-        "SELECT DISTINCT artist, album FROM tracks WHERE artist = ? AND album IS NOT NULL AND album != '' AND ("
-        "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
-        "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
-        "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-        "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
-        "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY album;" :
-        "SELECT DISTINCT artist, album FROM tracks WHERE album IS NOT NULL AND album != '' AND ("
-        "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
-        "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
-        "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-        "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
-        "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY artist, album;";
+        "SELECT DISTINCT artist, album FROM tracks WHERE artist = ? AND album IS NOT NULL AND album != '' AND "
+        AUDIO_EXT_FILTER " ORDER BY album;" :
+        "SELECT DISTINCT artist, album FROM tracks WHERE album IS NOT NULL AND album != '' AND "
+        AUDIO_EXT_FILTER " ORDER BY artist, album;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -609,11 +625,11 @@ GList* database_get_albums_by_artist(Database *db, const gchar *artist) {
         AlbumInfo *info = g_new0(AlbumInfo, 1);
         info->artist = g_strdup((const gchar *)sqlite3_column_text(stmt, 0));
         info->album = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
-        albums = g_list_append(albums, info);
+        albums = g_list_prepend(albums, info);
     }
     
     sqlite3_finalize(stmt);
-    return albums;
+    return g_list_reverse(albums);
 }
 
 gboolean database_update_track(Database *db, Track *track) {
@@ -626,6 +642,7 @@ gboolean database_update_track(Database *db, Track *track) {
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
     
     if (rc != SQLITE_OK) {
+        g_warning("database_update_track: prepare failed: %s", sqlite3_errmsg(db->db));
         return FALSE;
     }
     
@@ -653,6 +670,7 @@ gboolean database_delete_track(Database *db, gint track_id) {
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
     
     if (rc != SQLITE_OK) {
+        g_warning("database_delete_track: prepare failed: %s", sqlite3_errmsg(db->db));
         return FALSE;
     }
     
@@ -667,12 +685,8 @@ GList* database_search_tracks(Database *db, const gchar *search_term) {
     if (!db || !db->db || !search_term) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
-                      "FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?) AND ("
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR "
-                      "LOWER(file_path) LIKE '%.flac' OR LOWER(file_path) LIKE '%.wav' OR "
-                      "LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR "
-                      "LOWER(file_path) LIKE '%.ape' OR LOWER(file_path) LIKE '%.mpc') ORDER BY artist, album, track_number, title;";
+                      "FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?) AND "
+                      AUDIO_EXT_FILTER " ORDER BY artist, album, track_number, title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -700,11 +714,11 @@ GList* database_search_tracks(Database *db, const gchar *search_term) {
         track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
         track->play_count = sqlite3_column_int(stmt, 8);
         track->date_added = sqlite3_column_int64(stmt, 9);
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 /* Video operations */
@@ -714,14 +728,8 @@ GList* database_get_all_videos(Database *db) {
     /* Get all files and filter by video extensions (case-insensitive) */
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE "
-                      "LOWER(file_path) LIKE '%.mp4' OR LOWER(file_path) LIKE '%.mkv' OR LOWER(file_path) LIKE '%.avi' OR "
-                      "LOWER(file_path) LIKE '%.mov' OR LOWER(file_path) LIKE '%.wmv' OR LOWER(file_path) LIKE '%.flv' OR "
-                      "LOWER(file_path) LIKE '%.webm' OR LOWER(file_path) LIKE '%.m4v' OR LOWER(file_path) LIKE '%.mpg' OR "
-                      "LOWER(file_path) LIKE '%.mpeg' OR LOWER(file_path) LIKE '%.3gp' OR LOWER(file_path) LIKE '%.ogv' OR "
-                      "LOWER(file_path) LIKE '%.ts' OR LOWER(file_path) LIKE '%.m2ts' OR LOWER(file_path) LIKE '%.vob' OR "
-                      "LOWER(file_path) LIKE '%.divx' OR LOWER(file_path) LIKE '%.xvid' OR LOWER(file_path) LIKE '%.asf' OR "
-                      "LOWER(file_path) LIKE '%.rm' OR LOWER(file_path) LIKE '%.rmvb' "
-                      "ORDER BY title;";
+                      VIDEO_EXT_FILTER
+                      " ORDER BY title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -743,26 +751,19 @@ GList* database_get_all_videos(Database *db) {
         video->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
         video->play_count = sqlite3_column_int(stmt, 8);
         video->date_added = sqlite3_column_int64(stmt, 9);
-        videos = g_list_append(videos, video);
+        videos = g_list_prepend(videos, video);
     }
     
     sqlite3_finalize(stmt);
-    return videos;
+    return g_list_reverse(videos);
 }
 
 GList* database_search_videos(Database *db, const gchar *search_term) {
     if (!db || !db->db || !search_term) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
-                      "FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?) AND ("
-                      "file_path LIKE '%.mp4' OR file_path LIKE '%.mkv' OR file_path LIKE '%.avi' OR "
-                      "file_path LIKE '%.mov' OR file_path LIKE '%.wmv' OR file_path LIKE '%.flv' OR "
-                      "file_path LIKE '%.webm' OR file_path LIKE '%.m4v' OR file_path LIKE '%.mpg' OR "
-                      "file_path LIKE '%.mpeg' OR file_path LIKE '%.3gp' OR file_path LIKE '%.ogv' OR "
-                      "file_path LIKE '%.ts' OR file_path LIKE '%.m2ts' OR file_path LIKE '%.vob' OR "
-                      "file_path LIKE '%.divx' OR file_path LIKE '%.xvid' OR file_path LIKE '%.asf' OR "
-                      "file_path LIKE '%.rm' OR file_path LIKE '%.rmvb'"
-                      ") ORDER BY title;";
+                      "FROM tracks WHERE (title LIKE ? OR artist LIKE ? OR album LIKE ?) AND "
+                      VIDEO_EXT_FILTER " ORDER BY title;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -790,11 +791,11 @@ GList* database_search_videos(Database *db, const gchar *search_term) {
         video->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
         video->play_count = sqlite3_column_int(stmt, 8);
         video->date_added = sqlite3_column_int64(stmt, 9);
-        videos = g_list_append(videos, video);
+        videos = g_list_prepend(videos, video);
     }
     
     sqlite3_finalize(stmt);
-    return videos;
+    return g_list_reverse(videos);
 }
 
 gint database_create_playlist(Database *db, const gchar *name) {
@@ -840,11 +841,11 @@ GList* database_get_all_playlists(Database *db) {
         playlist->id = sqlite3_column_int(stmt, 0);
         playlist->name = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
         playlist->date_created = sqlite3_column_int64(stmt, 2);
-        playlists = g_list_append(playlists, playlist);
+        playlists = g_list_prepend(playlists, playlist);
     }
     
     sqlite3_finalize(stmt);
-    return playlists;
+    return g_list_reverse(playlists);
 }
 
 gboolean database_add_track_to_playlist(Database *db, gint playlist_id, gint track_id) {
@@ -869,6 +870,7 @@ gboolean database_add_track_to_playlist(Database *db, gint playlist_id, gint tra
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
     
     if (rc != SQLITE_OK) {
+        g_warning("database_add_track_to_playlist: prepare failed: %s", sqlite3_errmsg(db->db));
         return FALSE;
     }
     
@@ -889,8 +891,8 @@ GList* database_get_playlist_tracks(Database *db, gint playlist_id) {
                       "t.file_path, t.play_count, t.date_added "
                       "FROM tracks t "
                       "JOIN playlist_tracks pt ON t.id = pt.track_id "
-                      "WHERE pt.playlist_id = ? AND ("
-                      "LOWER(t.file_path) LIKE '%.mp3' OR LOWER(t.file_path) LIKE '%.ogg' OR LOWER(t.file_path) LIKE '%.flac' OR "
+                      "WHERE pt.playlist_id = ? AND "
+                      "(LOWER(t.file_path) LIKE '%.mp3' OR LOWER(t.file_path) LIKE '%.ogg' OR LOWER(t.file_path) LIKE '%.flac' OR "
                       "LOWER(t.file_path) LIKE '%.wav' OR LOWER(t.file_path) LIKE '%.m4a' OR LOWER(t.file_path) LIKE '%.aac' OR "
                       "LOWER(t.file_path) LIKE '%.opus' OR LOWER(t.file_path) LIKE '%.wma' OR LOWER(t.file_path) LIKE '%.ape' OR "
                       "LOWER(t.file_path) LIKE '%.mpc') "
@@ -917,11 +919,11 @@ GList* database_get_playlist_tracks(Database *db, gint playlist_id) {
         track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 6));
         track->play_count = sqlite3_column_int(stmt, 7);
         track->date_added = sqlite3_column_int64(stmt, 8);
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 gboolean database_delete_playlist(Database *db, gint playlist_id) {
@@ -941,6 +943,7 @@ gboolean database_delete_playlist(Database *db, gint playlist_id) {
     int rc = sqlite3_prepare_v2(db->db, sql2, -1, &stmt2, NULL);
     
     if (rc != SQLITE_OK) {
+        g_warning("database_delete_playlist: prepare failed: %s", sqlite3_errmsg(db->db));
         return FALSE;
     }
     
@@ -981,6 +984,7 @@ gboolean database_toggle_favorite(Database *db, gint track_id) {
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
     
     if (rc != SQLITE_OK) {
+        g_warning("database_toggle_favorite: prepare failed: %s", sqlite3_errmsg(db->db));
         return FALSE;
     }
     
@@ -1000,6 +1004,7 @@ gboolean database_set_favorite(Database *db, gint track_id, gboolean is_favorite
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
     
     if (rc != SQLITE_OK) {
+        g_warning("database_set_favorite: prepare failed: %s", sqlite3_errmsg(db->db));
         return FALSE;
     }
     
@@ -1038,11 +1043,8 @@ GList* database_get_favorite_tracks(Database *db, gint limit) {
     if (!db || !db->db) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added, last_played, is_favorite "
-                      "FROM tracks WHERE is_favorite = 1 AND ("
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                      "LOWER(file_path) LIKE '%.mpc') ORDER BY title ASC LIMIT ?;";
+                      "FROM tracks WHERE is_favorite = 1 AND "
+                      AUDIO_EXT_FILTER " ORDER BY title ASC LIMIT ?;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -1068,22 +1070,19 @@ GList* database_get_favorite_tracks(Database *db, gint limit) {
         track->date_added = sqlite3_column_int64(stmt, 9);
         track->last_played = sqlite3_column_int64(stmt, 10);
         track->is_favorite = sqlite3_column_int(stmt, 11) != 0;
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 GList* database_get_most_played_tracks(Database *db, gint limit) {
     if (!db || !db->db) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
-                      "FROM tracks WHERE play_count > 0 AND ("
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                      "LOWER(file_path) LIKE '%.mpc') ORDER BY play_count DESC LIMIT ?;";
+                      "FROM tracks WHERE play_count > 0 AND "
+                      AUDIO_EXT_FILTER " ORDER BY play_count DESC LIMIT ?;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -1107,11 +1106,11 @@ GList* database_get_most_played_tracks(Database *db, gint limit) {
         track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
         track->play_count = sqlite3_column_int(stmt, 8);
         track->date_added = sqlite3_column_int64(stmt, 9);
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 GList* database_get_recent_tracks(Database *db, gint limit) {
@@ -1119,10 +1118,7 @@ GList* database_get_recent_tracks(Database *db, gint limit) {
     
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added "
                       "FROM tracks WHERE "
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                      "LOWER(file_path) LIKE '%.mpc' ORDER BY date_added DESC LIMIT ?;";
+                      AUDIO_EXT_FILTER " ORDER BY date_added DESC LIMIT ?;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -1146,22 +1142,19 @@ GList* database_get_recent_tracks(Database *db, gint limit) {
         track->file_path = g_strdup((const gchar *)sqlite3_column_text(stmt, 7));
         track->play_count = sqlite3_column_int(stmt, 8);
         track->date_added = sqlite3_column_int64(stmt, 9);
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 GList* database_get_recently_played_tracks(Database *db, gint limit) {
     if (!db || !db->db) return NULL;
     
     const char *sql = "SELECT id, title, artist, album, genre, track_number, duration, file_path, play_count, date_added, last_played "
-                      "FROM tracks WHERE last_played IS NOT NULL AND last_played > 0 AND ("
-                      "LOWER(file_path) LIKE '%.mp3' OR LOWER(file_path) LIKE '%.ogg' OR LOWER(file_path) LIKE '%.flac' OR "
-                      "LOWER(file_path) LIKE '%.wav' OR LOWER(file_path) LIKE '%.m4a' OR LOWER(file_path) LIKE '%.aac' OR "
-                      "LOWER(file_path) LIKE '%.opus' OR LOWER(file_path) LIKE '%.wma' OR LOWER(file_path) LIKE '%.ape' OR "
-                      "LOWER(file_path) LIKE '%.mpc') ORDER BY last_played DESC LIMIT ?;";
+                      "FROM tracks WHERE last_played IS NOT NULL AND last_played > 0 AND "
+                      AUDIO_EXT_FILTER " ORDER BY last_played DESC LIMIT ?;";
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -1186,11 +1179,11 @@ GList* database_get_recently_played_tracks(Database *db, gint limit) {
         track->play_count = sqlite3_column_int(stmt, 8);
         track->date_added = sqlite3_column_int64(stmt, 9);
         track->last_played = sqlite3_column_int64(stmt, 10);
-        tracks = g_list_append(tracks, track);
+        tracks = g_list_prepend(tracks, track);
     }
     
     sqlite3_finalize(stmt);
-    return tracks;
+    return g_list_reverse(tracks);
 }
 
 void track_free(Track *track) {
@@ -1329,11 +1322,11 @@ GList* database_get_podcast_episodes(Database *db, gint podcast_id) {
         /* Load value information */
         episode->value = database_load_episode_value(db, episode->id);
         
-        episodes = g_list_append(episodes, episode);
+        episodes = g_list_prepend(episodes, episode);
     }
     
     sqlite3_finalize(stmt);
-    return episodes;
+    return g_list_reverse(episodes);
 }
 
 PodcastEpisode* database_get_episode_by_id(Database *db, gint episode_id) {
@@ -1415,11 +1408,11 @@ GList* database_get_podcasts(Database *db) {
         podcast->images = NULL;
         podcast->value = database_load_podcast_value(db, podcast->id);
         
-        podcasts = g_list_append(podcasts, podcast);
+        podcasts = g_list_prepend(podcasts, podcast);
     }
     
     sqlite3_finalize(stmt);
-    return podcasts;
+    return g_list_reverse(podcasts);
 }
 
 Podcast* database_get_podcast_by_id(Database *db, gint podcast_id) {
@@ -1465,6 +1458,8 @@ Podcast* database_get_podcast_by_id(Database *db, gint podcast_id) {
 gboolean database_save_episode_funding(Database *db, gint episode_id, GList *funding_list) {
     if (!db || !db->db || episode_id <= 0) return FALSE;
     
+    database_begin_transaction(db);
+    
     /* First, delete existing funding for this episode */
     const char *delete_sql = "DELETE FROM episode_funding WHERE episode_id = ?;";
     sqlite3_stmt *delete_stmt;
@@ -1476,7 +1471,10 @@ gboolean database_save_episode_funding(Database *db, gint episode_id, GList *fun
     }
     
     /* Insert new funding entries */
-    if (!funding_list) return TRUE;
+    if (!funding_list) {
+        database_commit_transaction(db);
+        return TRUE;
+    }
     
     const char *insert_sql = "INSERT INTO episode_funding (episode_id, url, message, platform) VALUES (?, ?, ?, ?);";
     
@@ -1496,6 +1494,7 @@ gboolean database_save_episode_funding(Database *db, gint episode_id, GList *fun
         sqlite3_finalize(stmt);
     }
     
+    database_commit_transaction(db);
     return TRUE;
 }
 
@@ -1517,15 +1516,17 @@ GList* database_get_episode_funding(Database *db, gint episode_id) {
         funding->message = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
         funding->platform = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         
-        funding_list = g_list_append(funding_list, funding);
+        funding_list = g_list_prepend(funding_list, funding);
     }
     
     sqlite3_finalize(stmt);
-    return funding_list;
+    return g_list_reverse(funding_list);
 }
 
 gboolean database_save_podcast_funding(Database *db, gint podcast_id, GList *funding_list) {
     if (!db || !db->db || podcast_id <= 0) return FALSE;
+    
+    database_begin_transaction(db);
     
     /* First, delete existing funding for this podcast */
     const char *delete_sql = "DELETE FROM podcast_funding WHERE podcast_id = ?;";
@@ -1537,13 +1538,19 @@ gboolean database_save_podcast_funding(Database *db, gint podcast_id, GList *fun
         sqlite3_finalize(delete_stmt);
     }
     
-    if (!funding_list) return TRUE; /* No funding to save */
+    if (!funding_list) {
+        database_commit_transaction(db);
+        return TRUE; /* No funding to save */
+    }
     
     /* Insert new funding entries */
     const char *insert_sql = "INSERT INTO podcast_funding (podcast_id, url, message, platform) VALUES (?, ?, ?, ?);";
     sqlite3_stmt *insert_stmt;
     rc = sqlite3_prepare_v2(db->db, insert_sql, -1, &insert_stmt, NULL);
-    if (rc != SQLITE_OK) return FALSE;
+    if (rc != SQLITE_OK) {
+        database_rollback_transaction(db);
+        return FALSE;
+    }
     
     for (GList *l = funding_list; l != NULL; l = l->next) {
         PodcastFunding *funding = (PodcastFunding *)l->data;
@@ -1559,6 +1566,7 @@ gboolean database_save_podcast_funding(Database *db, gint podcast_id, GList *fun
     }
     
     sqlite3_finalize(insert_stmt);
+    database_commit_transaction(db);
     return TRUE;
 }
 
@@ -1579,15 +1587,17 @@ GList* database_load_podcast_funding(Database *db, gint podcast_id) {
         funding->message = g_strdup((const gchar *)sqlite3_column_text(stmt, 1));
         funding->platform = g_strdup((const gchar *)sqlite3_column_text(stmt, 2));
         
-        funding_list = g_list_append(funding_list, funding);
+        funding_list = g_list_prepend(funding_list, funding);
     }
     
     sqlite3_finalize(stmt);
-    return funding_list;
+    return g_list_reverse(funding_list);
 }
 
 gboolean database_save_podcast_value(Database *db, gint podcast_id, GList *value_list) {
     if (!db || !db->db || podcast_id <= 0) return FALSE;
+    
+    database_begin_transaction(db);
     
     /* First, delete existing values for this podcast */
     const char *delete_sql = "DELETE FROM podcast_value WHERE podcast_id = ?;";
@@ -1599,7 +1609,10 @@ gboolean database_save_podcast_value(Database *db, gint podcast_id, GList *value
         sqlite3_finalize(delete_stmt);
     }
     
-    if (!value_list) return TRUE; /* No values to save */
+    if (!value_list) {
+        database_commit_transaction(db);
+        return TRUE; /* No values to save */
+    }
     
     /* Save each value in the list */
     for (GList *l = value_list; l != NULL; l = l->next) {
@@ -1609,7 +1622,10 @@ gboolean database_save_podcast_value(Database *db, gint podcast_id, GList *value
         const char *insert_sql = "INSERT INTO podcast_value (podcast_id, type, method, suggested) VALUES (?, ?, ?, ?);";
         sqlite3_stmt *insert_stmt;
         rc = sqlite3_prepare_v2(db->db, insert_sql, -1, &insert_stmt, NULL);
-        if (rc != SQLITE_OK) return FALSE;
+        if (rc != SQLITE_OK) {
+            database_rollback_transaction(db);
+            return FALSE;
+        }
         
         sqlite3_bind_int(insert_stmt, 1, podcast_id);
         sqlite3_bind_text(insert_stmt, 2, value->type, -1, SQLITE_STATIC);
@@ -1619,7 +1635,10 @@ gboolean database_save_podcast_value(Database *db, gint podcast_id, GList *value
         rc = sqlite3_step(insert_stmt);
         sqlite3_finalize(insert_stmt);
         
-        if (rc != SQLITE_DONE) return FALSE;
+        if (rc != SQLITE_DONE) {
+            database_rollback_transaction(db);
+            return FALSE;
+        }
         
         gint64 value_id = sqlite3_last_insert_rowid(db->db);
         
@@ -1628,7 +1647,10 @@ gboolean database_save_podcast_value(Database *db, gint podcast_id, GList *value
             const char *recipient_sql = "INSERT INTO value_recipients (value_id, value_type, name, recipient_type, address, split, fee, custom_key, custom_value) VALUES (?, 'podcast', ?, ?, ?, ?, ?, ?, ?);";
             sqlite3_stmt *recipient_stmt;
             rc = sqlite3_prepare_v2(db->db, recipient_sql, -1, &recipient_stmt, NULL);
-            if (rc != SQLITE_OK) return FALSE;
+            if (rc != SQLITE_OK) {
+                database_rollback_transaction(db);
+                return FALSE;
+            }
             
             for (GList *rl = value->recipients; rl != NULL; rl = rl->next) {
                 ValueRecipient *recipient = (ValueRecipient *)rl->data;
@@ -1650,11 +1672,14 @@ gboolean database_save_podcast_value(Database *db, gint podcast_id, GList *value
         }
     }
     
+    database_commit_transaction(db);
     return TRUE;
 }
 
 gboolean database_save_episode_value(Database *db, gint episode_id, GList *value_list) {
     if (!db || !db->db || episode_id <= 0) return FALSE;
+    
+    database_begin_transaction(db);
     
     /* First, delete existing values for this episode */
     const char *delete_sql = "DELETE FROM episode_value WHERE episode_id = ?;";
@@ -1666,7 +1691,10 @@ gboolean database_save_episode_value(Database *db, gint episode_id, GList *value
         sqlite3_finalize(delete_stmt);
     }
     
-    if (!value_list) return TRUE; /* No values to save */
+    if (!value_list) {
+        database_commit_transaction(db);
+        return TRUE; /* No values to save */
+    }
     
     /* Save each value in the list */
     for (GList *l = value_list; l != NULL; l = l->next) {
@@ -1676,7 +1704,10 @@ gboolean database_save_episode_value(Database *db, gint episode_id, GList *value
         const char *insert_sql = "INSERT INTO episode_value (episode_id, type, method, suggested) VALUES (?, ?, ?, ?);";
         sqlite3_stmt *insert_stmt;
         rc = sqlite3_prepare_v2(db->db, insert_sql, -1, &insert_stmt, NULL);
-        if (rc != SQLITE_OK) return FALSE;
+        if (rc != SQLITE_OK) {
+            database_rollback_transaction(db);
+            return FALSE;
+        }
         
         sqlite3_bind_int(insert_stmt, 1, episode_id);
         sqlite3_bind_text(insert_stmt, 2, value->type, -1, SQLITE_STATIC);
@@ -1686,7 +1717,10 @@ gboolean database_save_episode_value(Database *db, gint episode_id, GList *value
         rc = sqlite3_step(insert_stmt);
         sqlite3_finalize(insert_stmt);
         
-        if (rc != SQLITE_DONE) return FALSE;
+        if (rc != SQLITE_DONE) {
+            database_rollback_transaction(db);
+            return FALSE;
+        }
         
         gint64 value_id = sqlite3_last_insert_rowid(db->db);
         
@@ -1695,7 +1729,10 @@ gboolean database_save_episode_value(Database *db, gint episode_id, GList *value
             const char *recipient_sql = "INSERT INTO value_recipients (value_id, value_type, name, recipient_type, address, split, fee, custom_key, custom_value) VALUES (?, 'episode', ?, ?, ?, ?, ?, ?, ?);";
             sqlite3_stmt *recipient_stmt;
             rc = sqlite3_prepare_v2(db->db, recipient_sql, -1, &recipient_stmt, NULL);
-            if (rc != SQLITE_OK) return FALSE;
+            if (rc != SQLITE_OK) {
+                database_rollback_transaction(db);
+                return FALSE;
+            }
             
             for (GList *rl = value->recipients; rl != NULL; rl = rl->next) {
                 ValueRecipient *recipient = (ValueRecipient *)rl->data;
@@ -1717,6 +1754,7 @@ gboolean database_save_episode_value(Database *db, gint episode_id, GList *value
         }
     }
     
+    database_commit_transaction(db);
     return TRUE;
 }
 
@@ -1756,17 +1794,18 @@ GList* database_load_podcast_value(Database *db, gint podcast_id) {
                 recipient->custom_key = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 5));
                 recipient->custom_value = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 6));
                 
-                value->recipients = g_list_append(value->recipients, recipient);
+                value->recipients = g_list_prepend(value->recipients, recipient);
             }
             
             sqlite3_finalize(recipient_stmt);
         }
+        value->recipients = g_list_reverse(value->recipients);
         
-        value_list = g_list_append(value_list, value);
+        value_list = g_list_prepend(value_list, value);
     }
     
     sqlite3_finalize(stmt);
-    return value_list;
+    return g_list_reverse(value_list);
 }
 
 GList* database_load_episode_value(Database *db, gint episode_id) {
@@ -1805,17 +1844,18 @@ GList* database_load_episode_value(Database *db, gint episode_id) {
                 recipient->custom_key = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 5));
                 recipient->custom_value = g_strdup((const gchar *)sqlite3_column_text(recipient_stmt, 6));
                 
-                value->recipients = g_list_append(value->recipients, recipient);
+                value->recipients = g_list_prepend(value->recipients, recipient);
             }
             
             sqlite3_finalize(recipient_stmt);
         }
+        value->recipients = g_list_reverse(value->recipients);
         
-        value_list = g_list_append(value_list, value);
+        value_list = g_list_prepend(value_list, value);
     }
     
     sqlite3_finalize(stmt);
-    return value_list;
+    return g_list_reverse(value_list);
 }
 
 gboolean database_update_episode_downloaded(Database *db, gint episode_id, const gchar *local_path) {
@@ -1825,7 +1865,10 @@ gboolean database_update_episode_downloaded(Database *db, gint episode_id, const
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return FALSE;
+    if (rc != SQLITE_OK) {
+        g_warning("database_update_episode_downloaded: prepare failed: %s", sqlite3_errmsg(db->db));
+        return FALSE;
+    }
     
     sqlite3_bind_text(stmt, 1, local_path, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, episode_id);
@@ -1843,7 +1886,10 @@ gboolean database_update_episode_progress(Database *db, gint episode_id, gint po
     
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return FALSE;
+    if (rc != SQLITE_OK) {
+        g_warning("database_update_episode_progress: prepare failed: %s", sqlite3_errmsg(db->db));
+        return FALSE;
+    }
     
     sqlite3_bind_int(stmt, 1, position);
     sqlite3_bind_int(stmt, 2, played ? 1 : 0);
@@ -1858,48 +1904,82 @@ gboolean database_update_episode_progress(Database *db, gint episode_id, gint po
 gboolean database_delete_podcast(Database *db, gint podcast_id) {
     if (!db || !db->db || podcast_id <= 0) return FALSE;
     
-    /* Delete related data first (foreign key constraints) */
-    const char *delete_episodes_sql = "DELETE FROM podcast_episodes WHERE podcast_id=?;";
-    const char *delete_funding_sql = "DELETE FROM podcast_funding WHERE podcast_id=?;";
-    const char *delete_value_sql = "DELETE FROM podcast_value WHERE podcast_id=?;";
-    const char *delete_podcast_sql = "DELETE FROM podcasts WHERE id=?;";
+    database_begin_transaction(db);
+    
+    /* Delete all related data explicitly (handles databases where
+     * ON DELETE CASCADE may not be active due to missing PRAGMA).
+     * Order: deepest children first, then parents. */
+    
+    /* Delete value_recipients for both podcast and episode values */
+    const char *sql_delete_podcast_recipients =
+        "DELETE FROM value_recipients WHERE value_type='podcast' AND value_id IN "
+        "(SELECT id FROM podcast_value WHERE podcast_id=?);";
+    const char *sql_delete_episode_recipients =
+        "DELETE FROM value_recipients WHERE value_type='episode' AND value_id IN "
+        "(SELECT id FROM episode_value WHERE episode_id IN "
+        "(SELECT id FROM podcast_episodes WHERE podcast_id=?));";
+    
+    /* Delete episode-level child tables */
+    const char *sql_delete_episode_funding =
+        "DELETE FROM episode_funding WHERE episode_id IN "
+        "(SELECT id FROM podcast_episodes WHERE podcast_id=?);";
+    const char *sql_delete_episode_value =
+        "DELETE FROM episode_value WHERE episode_id IN "
+        "(SELECT id FROM podcast_episodes WHERE podcast_id=?);";
+    
+    /* Delete live item content links, then live items */
+    const char *sql_delete_content_links =
+        "DELETE FROM live_item_content_links WHERE live_item_id IN "
+        "(SELECT id FROM podcast_live_items WHERE podcast_id=?);";
+    const char *sql_delete_live_items =
+        "DELETE FROM podcast_live_items WHERE podcast_id=?;";
+    
+    /* Delete podcast-level tables */
+    const char *sql_delete_podcast_value = "DELETE FROM podcast_value WHERE podcast_id=?;";
+    const char *sql_delete_podcast_funding = "DELETE FROM podcast_funding WHERE podcast_id=?;";
+    const char *sql_delete_episodes = "DELETE FROM podcast_episodes WHERE podcast_id=?;";
+    const char *sql_delete_podcast = "DELETE FROM podcasts WHERE id=?;";
+    
+    const char *queries[] = {
+        sql_delete_podcast_recipients,
+        sql_delete_episode_recipients,
+        sql_delete_episode_funding,
+        sql_delete_episode_value,
+        sql_delete_content_links,
+        sql_delete_live_items,
+        sql_delete_podcast_value,
+        sql_delete_podcast_funding,
+        sql_delete_episodes,
+        sql_delete_podcast
+    };
     
     sqlite3_stmt *stmt;
     int rc;
+    gboolean success = TRUE;
     
-    /* Delete episodes */
-    rc = sqlite3_prepare_v2(db->db, delete_episodes_sql, -1, &stmt, NULL);
-    if (rc == SQLITE_OK) {
+    for (int i = 0; i < (int)G_N_ELEMENTS(queries); i++) {
+        rc = sqlite3_prepare_v2(db->db, queries[i], -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            g_warning("database_delete_podcast: Failed to prepare query %d: %s", i, sqlite3_errmsg(db->db));
+            continue;
+        }
         sqlite3_bind_int(stmt, 1, podcast_id);
-        sqlite3_step(stmt);
+        rc = sqlite3_step(stmt);
         sqlite3_finalize(stmt);
+        
+        /* Only the final DELETE (podcast itself) must succeed */
+        if (i == (int)G_N_ELEMENTS(queries) - 1 && rc != SQLITE_DONE) {
+            success = FALSE;
+        }
     }
     
-    /* Delete funding */
-    rc = sqlite3_prepare_v2(db->db, delete_funding_sql, -1, &stmt, NULL);
-    if (rc == SQLITE_OK) {
-        sqlite3_bind_int(stmt, 1, podcast_id);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
+    if (success) {
+        database_commit_transaction(db);
+    } else {
+        database_rollback_transaction(db);
     }
     
-    /* Delete value */
-    rc = sqlite3_prepare_v2(db->db, delete_value_sql, -1, &stmt, NULL);
-    if (rc == SQLITE_OK) {
-        sqlite3_bind_int(stmt, 1, podcast_id);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
-    }
-    
-    /* Delete podcast */
-    rc = sqlite3_prepare_v2(db->db, delete_podcast_sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return FALSE;
-    
-    sqlite3_bind_int(stmt, 1, podcast_id);
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    
-    return (rc == SQLITE_DONE);
+    return success;
 }
 
 gboolean database_clear_episode_download(Database *db, gint episode_id) {
@@ -2034,6 +2114,8 @@ gdouble database_get_preference_double(Database *db, const gchar *key, gdouble d
 gboolean database_save_podcast_live_items(Database *db, gint podcast_id, GList *live_items) {
     if (!db || !db->db || podcast_id <= 0) return FALSE;
     
+    database_begin_transaction(db);
+    
     /* First, delete existing live items for this podcast */
     const char *delete_sql = "DELETE FROM podcast_live_items WHERE podcast_id = ?;";
     sqlite3_stmt *delete_stmt;
@@ -2044,7 +2126,10 @@ gboolean database_save_podcast_live_items(Database *db, gint podcast_id, GList *
         sqlite3_finalize(delete_stmt);
     }
     
-    if (!live_items) return TRUE;  /* Nothing to save */
+    if (!live_items) {
+        database_commit_transaction(db);
+        return TRUE;  /* Nothing to save */
+    }
     
     const char *sql = "INSERT INTO podcast_live_items (podcast_id, guid, title, description, "
                       "enclosure_url, enclosure_type, enclosure_length, start_time, end_time, "
@@ -2052,7 +2137,10 @@ gboolean database_save_podcast_live_items(Database *db, gint podcast_id, GList *
     
     sqlite3_stmt *stmt;
     rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return FALSE;
+    if (rc != SQLITE_OK) {
+        database_rollback_transaction(db);
+        return FALSE;
+    }
     
     for (GList *l = live_items; l != NULL; l = l->next) {
         PodcastLiveItem *item = (PodcastLiveItem *)l->data;
@@ -2097,6 +2185,7 @@ gboolean database_save_podcast_live_items(Database *db, gint podcast_id, GList *
     }
     
     sqlite3_finalize(stmt);
+    database_commit_transaction(db);
     return TRUE;
 }
 
@@ -2139,16 +2228,17 @@ GList* database_load_podcast_live_items(Database *db, gint podcast_id) {
                 PodcastContentLink *link = g_new0(PodcastContentLink, 1);
                 link->href = g_strdup((const gchar *)sqlite3_column_text(link_stmt, 0));
                 link->text = g_strdup((const gchar *)sqlite3_column_text(link_stmt, 1));
-                item->content_links = g_list_append(item->content_links, link);
+                item->content_links = g_list_prepend(item->content_links, link);
             }
             sqlite3_finalize(link_stmt);
         }
+        item->content_links = g_list_reverse(item->content_links);
         
-        live_items = g_list_append(live_items, item);
+        live_items = g_list_prepend(live_items, item);
     }
     
     sqlite3_finalize(stmt);
-    return live_items;
+    return g_list_reverse(live_items);
 }
 
 gboolean database_has_active_live_item(Database *db, gint podcast_id) {
@@ -2169,4 +2259,125 @@ gboolean database_has_active_live_item(Database *db, gint podcast_id) {
     
     sqlite3_finalize(stmt);
     return has_live;
+}
+
+/* --- Browse query functions (used by browser panel) --- */
+
+void database_browse_result_free(DatabaseBrowseResult *result) {
+    if (!result) return;
+    g_free(result->name);
+    g_free(result);
+}
+
+static GList* database_browse_query(Database *db, const char *sql, const gchar *bind_text) {
+    if (!db || !db->db) return NULL;
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return NULL;
+    
+    if (bind_text) {
+        sqlite3_bind_text(stmt, 1, bind_text, -1, SQLITE_TRANSIENT);
+    }
+    
+    GList *results = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        DatabaseBrowseResult *result = g_new0(DatabaseBrowseResult, 1);
+        result->name = g_strdup((const gchar *)sqlite3_column_text(stmt, 0));
+        result->count = sqlite3_column_int(stmt, 1);
+        results = g_list_prepend(results, result);
+    }
+    
+    sqlite3_finalize(stmt);
+    return g_list_reverse(results);
+}
+
+GList* database_browse_artists(Database *db) {
+    return database_browse_query(db,
+        "SELECT DISTINCT Artist, COUNT(*) FROM tracks "
+        "WHERE Artist IS NOT NULL AND Artist != '' AND " AUDIO_EXT_FILTER
+        " GROUP BY Artist ORDER BY Artist",
+        NULL);
+}
+
+GList* database_browse_albums(Database *db, const gchar *artist_filter) {
+    if (artist_filter) {
+        return database_browse_query(db,
+            "SELECT DISTINCT Album, COUNT(*) FROM tracks "
+            "WHERE Album IS NOT NULL AND Album != '' AND Artist = ? AND " AUDIO_EXT_FILTER
+            " GROUP BY Album ORDER BY Album",
+            artist_filter);
+    }
+    return database_browse_query(db,
+        "SELECT DISTINCT Album, COUNT(*) FROM tracks "
+        "WHERE Album IS NOT NULL AND Album != '' AND " AUDIO_EXT_FILTER
+        " GROUP BY Album ORDER BY Album",
+        NULL);
+}
+
+GList* database_browse_genres(Database *db) {
+    return database_browse_query(db,
+        "SELECT DISTINCT Genre, COUNT(*) FROM tracks "
+        "WHERE Genre IS NOT NULL AND Genre != '' AND " AUDIO_EXT_FILTER
+        " GROUP BY Genre ORDER BY Genre",
+        NULL);
+}
+
+GList* database_browse_years(Database *db) {
+    return database_browse_query(db,
+        "SELECT DISTINCT CAST(Year AS TEXT), COUNT(*) FROM tracks "
+        "WHERE Year > 0 AND " AUDIO_EXT_FILTER
+        " GROUP BY Year ORDER BY Year DESC",
+        NULL);
+}
+
+static GList* database_distinct_query(Database *db, const char *sql, const gchar *bind_text) {
+    if (!db || !db->db) return NULL;
+    
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return NULL;
+    
+    if (bind_text) {
+        sqlite3_bind_text(stmt, 1, bind_text, -1, SQLITE_TRANSIENT);
+    }
+    
+    GList *list = NULL;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        list = g_list_prepend(list, g_strdup((const gchar *)sqlite3_column_text(stmt, 0)));
+    }
+    
+    sqlite3_finalize(stmt);
+    return g_list_reverse(list);
+}
+
+GList* database_get_distinct_artists(Database *db) {
+    return database_distinct_query(db,
+        "SELECT DISTINCT Artist FROM tracks "
+        "WHERE Artist IS NOT NULL AND Artist != '' AND " AUDIO_EXT_FILTER
+        " ORDER BY Artist",
+        NULL);
+}
+
+GList* database_get_distinct_albums(Database *db, const gchar *artist_filter) {
+    if (artist_filter) {
+        return database_distinct_query(db,
+            "SELECT DISTINCT Album FROM tracks "
+            "WHERE Album IS NOT NULL AND Album != '' AND Artist = ? AND " AUDIO_EXT_FILTER
+            " ORDER BY Album",
+            artist_filter);
+    }
+    return database_distinct_query(db,
+        "SELECT DISTINCT Album FROM tracks "
+        "WHERE Album IS NOT NULL AND Album != '' AND " AUDIO_EXT_FILTER
+        " ORDER BY Album",
+        NULL);
+}
+
+GList* database_get_distinct_genres(Database *db) {
+    return database_distinct_query(db,
+        "SELECT DISTINCT Genre FROM tracks "
+        "WHERE Genre IS NOT NULL AND Genre != '' AND " AUDIO_EXT_FILTER
+        " ORDER BY Genre",
+        NULL);
 }

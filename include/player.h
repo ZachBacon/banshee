@@ -14,6 +14,9 @@ typedef enum {
     PLAYER_STATE_STOPPED
 } PlayerState;
 
+typedef struct _PositionCallbackData PositionCallbackData;
+typedef struct _EosCallbackData EosCallbackData;
+
 typedef struct {
     GstElement *pipeline;
     GstElement *playbin;
@@ -24,10 +27,9 @@ typedef struct {
     gdouble volume;
     gint64 duration;
     gint64 position;
-    GThread *bus_thread;
-    GMainLoop *bus_loop;
-    GMainContext *bus_context;
-    guint position_timer_id;  /* Timer running in GStreamer context */
+    PositionCallbackData *position_cb_data;
+    EosCallbackData *eos_cb_data;
+    guint ui_position_timer_id;  /* Timer for UI position updates */
 } MediaPlayer;
 
 /* Player initialization and cleanup */

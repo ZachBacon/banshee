@@ -7,72 +7,50 @@
 #include <stdio.h>
 #include <string.h>
 
-static gboolean is_audio_file(const gchar *filename) {
-    /* Check audio extensions only */
-    const gchar *audio_extensions[] = {
-        ".mp3", ".ogg", ".flac", ".wav", ".m4a", ".aac", ".opus", ".wma", ".ape", ".mpc",
-        NULL
-    };
-    
+/* Shared extension arrays — single source of truth */
+static const gchar *audio_extensions[] = {
+    ".mp3", ".ogg", ".flac", ".wav", ".m4a", ".aac", ".opus", ".wma", ".ape", ".mpc",
+    NULL
+};
+
+static const gchar *video_extensions[] = {
+    ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg",
+    ".3gp", ".ogv", ".ts", ".m2ts", ".vob", ".divx", ".xvid", ".asf", ".rm", ".rmvb",
+    NULL
+};
+
+static gboolean check_extensions(const gchar *filename, const gchar **extensions) {
     gchar *lower = g_ascii_strdown(filename, -1);
-    gboolean is_audio = FALSE;
-    
-    for (int i = 0; audio_extensions[i] != NULL; i++) {
-        if (g_str_has_suffix(lower, audio_extensions[i])) {
-            is_audio = TRUE;
+    gboolean match = FALSE;
+    for (int i = 0; extensions[i] != NULL; i++) {
+        if (g_str_has_suffix(lower, extensions[i])) {
+            match = TRUE;
             break;
         }
     }
-    
     g_free(lower);
-    return is_audio;
+    return match;
+}
+
+static gboolean is_audio_file(const gchar *filename) {
+    return check_extensions(filename, audio_extensions);
 }
 
 static gboolean is_video_file(const gchar *filename) {
-    /* Check video extensions only */
-    const gchar *video_extensions[] = {
-        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg",
-        ".3gp", ".ogv", ".ts", ".m2ts", ".vob", ".divx", ".xvid", ".asf", ".rm", ".rmvb",
-        NULL
-    };
-    
-    gchar *lower = g_ascii_strdown(filename, -1);
-    gboolean is_video = FALSE;
-    
-    for (int i = 0; video_extensions[i] != NULL; i++) {
-        if (g_str_has_suffix(lower, video_extensions[i])) {
-            is_video = TRUE;
-            break;
-        }
-    }
-    
-    g_free(lower);
-    return is_video;
+    return check_extensions(filename, video_extensions);
 }
 
 static gboolean is_media_file(const gchar *filename) {
-    /* Check all media extensions */
-    const gchar *extensions[] = {
-        /* Audio formats */
-        ".mp3", ".ogg", ".flac", ".wav", ".m4a", ".aac", ".opus", ".wma", ".ape", ".mpc",
-        /* Video formats */
-        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg",
-        ".3gp", ".ogv", ".ts", ".m2ts", ".vob", ".divx", ".xvid", ".asf", ".rm", ".rmvb",
-        NULL
-    };
-    
-    gchar *lower = g_ascii_strdown(filename, -1);
-    gboolean is_media = FALSE;
-    
-    for (int i = 0; extensions[i] != NULL; i++) {
-        if (g_str_has_suffix(lower, extensions[i])) {
-            is_media = TRUE;
-            break;
-        }
+    return is_audio_file(filename) || is_video_file(filename);
+}
+
+/* Helper: strip file extension by finding the last '.' */
+static gchar* strip_extension(const gchar *basename) {
+    const gchar *dot = strrchr(basename, '.');
+    if (dot && dot != basename) {
+        return g_strndup(basename, dot - basename);
     }
-    
-    g_free(lower);
-    return is_media;
+    return g_strdup(basename);
 }
 
 static void extract_tags_from_file(const gchar *filepath, Track *track) {
@@ -86,50 +64,61 @@ static void extract_tags_from_file(const gchar *filepath, Track *track) {
     gst_element_set_state(pipeline, GST_STATE_PAUSED);
     
     GstBus *bus = gst_element_get_bus(pipeline);
-    GstMessage *msg = gst_bus_timed_pop_filtered(bus, 5 * GST_SECOND,
-        GST_MESSAGE_ASYNC_DONE | GST_MESSAGE_TAG | GST_MESSAGE_ERROR);
     
-    if (msg) {
-        if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_TAG) {
-            GstTagList *tags = NULL;
-            gst_message_parse_tag(msg, &tags);
-            
-            gchar *title = NULL, *artist = NULL, *album = NULL, *genre = NULL;
-            guint year = 0, track_number = 0;
-            
-            gst_tag_list_get_string(tags, GST_TAG_TITLE, &title);
-            gst_tag_list_get_string(tags, GST_TAG_ARTIST, &artist);
-            gst_tag_list_get_string(tags, GST_TAG_ALBUM, &album);
-            gst_tag_list_get_string(tags, GST_TAG_GENRE, &genre);
-            gst_tag_list_get_uint(tags, GST_TAG_DATE_TIME, &year);
-            gst_tag_list_get_uint(tags, GST_TAG_TRACK_NUMBER, &track_number);
-            
-            if (title) {
-                g_free(track->title);
-                track->title = title;
+    /* Loop collecting TAG messages until ASYNC_DONE or error/timeout.
+     * GStreamer often sends multiple TAG messages as different elements
+     * discover metadata. */
+    gboolean done = FALSE;
+    while (!done) {
+        GstMessage *msg = gst_bus_timed_pop_filtered(bus, 5 * GST_SECOND,
+            GST_MESSAGE_ASYNC_DONE | GST_MESSAGE_TAG | GST_MESSAGE_ERROR);
+        
+        if (!msg) break;  /* Timeout */
+        
+        switch (GST_MESSAGE_TYPE(msg)) {
+            case GST_MESSAGE_TAG: {
+                GstTagList *tags = NULL;
+                gst_message_parse_tag(msg, &tags);
+                
+                gchar *val = NULL;
+                guint uval = 0;
+                
+                if (gst_tag_list_get_string(tags, GST_TAG_TITLE, &val) && val) {
+                    g_free(track->title);
+                    track->title = val;
+                }
+                if (gst_tag_list_get_string(tags, GST_TAG_ARTIST, &val) && val) {
+                    g_free(track->artist);
+                    track->artist = val;
+                }
+                if (gst_tag_list_get_string(tags, GST_TAG_ALBUM, &val) && val) {
+                    g_free(track->album);
+                    track->album = val;
+                }
+                if (gst_tag_list_get_string(tags, GST_TAG_GENRE, &val) && val) {
+                    g_free(track->genre);
+                    track->genre = val;
+                }
+                if (gst_tag_list_get_uint(tags, GST_TAG_TRACK_NUMBER, &uval) && uval > 0) {
+                    track->track_number = (gint)uval;
+                }
+                
+                gst_tag_list_unref(tags);
+                break;
             }
-            if (artist) {
-                g_free(track->artist);
-                track->artist = artist;
-            }
-            if (album) {
-                g_free(track->album);
-                track->album = album;
-            }
-            if (genre) {
-                g_free(track->genre);
-                track->genre = genre;
-            }
-            if (track_number > 0) {
-                track->track_number = (gint)track_number;
-            }
-            
-            gst_tag_list_unref(tags);
+            case GST_MESSAGE_ASYNC_DONE:
+                done = TRUE;
+                break;
+            case GST_MESSAGE_ERROR:
+                done = TRUE;
+                break;
+            default:
+                break;
         }
         gst_message_unref(msg);
     }
     
-    /* Get duration */
+    /* Get duration (more reliable after ASYNC_DONE) */
     gint64 duration;
     if (gst_element_query_duration(pipeline, GST_FORMAT_TIME, &duration)) {
         track->duration = (gint)(duration / GST_SECOND);
@@ -156,8 +145,7 @@ static void scan_directory_recursive(const gchar *path, Database *db, CoverArtMa
             
             /* Extract title from filename as fallback */
             gchar *basename = g_path_get_basename(fullpath);
-            gchar *title = g_strndup(basename, strlen(basename) - 4); /* Remove extension */
-            track->title = title;
+            track->title = strip_extension(basename);
             g_free(basename);
             
             track->artist = g_strdup("Unknown Artist");
@@ -186,12 +174,7 @@ static void scan_directory_recursive(const gchar *path, Database *db, CoverArtMa
                 }
             }
             
-            g_free(track->title);
-            g_free(track->artist);
-            g_free(track->album);
-            if (track->genre) g_free(track->genre);
-            g_free(track->file_path);
-            g_free(track);
+            database_free_track(track);
         }
         
         g_free(fullpath);
@@ -229,8 +212,7 @@ static void scan_audio_files_recursive(const gchar *path, Database *db, CoverArt
             
             /* Extract title from filename as fallback */
             gchar *basename = g_path_get_basename(fullpath);
-            gchar *title = g_strndup(basename, strlen(basename) - 4); /* Remove extension */
-            track->title = title;
+            track->title = strip_extension(basename);
             g_free(basename);
             
             track->artist = g_strdup("Unknown Artist");
@@ -283,8 +265,7 @@ static void scan_video_files_recursive(const gchar *path, Database *db, CoverArt
             
             /* Extract title from filename as fallback */
             gchar *basename = g_path_get_basename(fullpath);
-            gchar *title = g_strndup(basename, strlen(basename) - 4); /* Remove extension */
-            track->title = title;
+            track->title = strip_extension(basename);
             g_free(basename);
             
             track->artist = g_strdup("Unknown Artist");

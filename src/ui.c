@@ -36,6 +36,8 @@ static void on_import_video_action(GSimpleAction *action, GVariant *parameter, g
 static void on_search_changed(GtkSearchEntry *entry, gpointer user_data);
 static void on_preferences_action(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 static void ui_update_cover_art(MediaPlayerUI *ui, const gchar *artist, const gchar *album, const gchar *podcast_image_url);
+static void on_radio_dir_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data);
+static void on_radio_sub_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data);
 
 static void on_seek_changed(GtkRange *range, gpointer user_data) {
     MediaPlayerUI *ui = (MediaPlayerUI *)user_data;
@@ -111,6 +113,12 @@ static GtkWidget* create_hamburger_menu(MediaPlayerUI *ui) {
     GActionMap *action_map = G_ACTION_MAP(window);
     g_action_map_add_action_entries(action_map, win_actions, G_N_ELEMENTS(win_actions), ui);
     
+    /* Unref menu sections (the model holds its own refs) */
+    g_object_unref(media_section);
+    g_object_unref(import_section);
+    g_object_unref(radio_section);
+    g_object_unref(prefs_section);
+    g_object_unref(app_section);
     g_object_unref(menu);
     
     return popover;
@@ -430,9 +438,11 @@ static void on_funding_url_clicked(GtkWidget *button, gpointer user_data) {
     (void)user_data;
     const gchar *url = (const gchar *)g_object_get_data(G_OBJECT(button), "funding_url");
     if (url) {
-        gchar *command = g_strdup_printf("xdg-open '%s'", url);
-        g_spawn_command_line_async(command, NULL);
-        g_free(command);
+        GError *error = NULL;
+        if (!g_app_info_launch_default_for_uri(url, NULL, &error)) {
+            g_warning("Failed to open URL %s: %s", url, error->message);
+            g_error_free(error);
+        }
     }
 }
 
@@ -779,7 +789,38 @@ static GtkWidget* create_track_list(MediaPlayerUI *ui) {
     gtk_widget_add_controller(ui->track_listview, GTK_EVENT_CONTROLLER(right_click));
     
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), ui->track_listview);
-    return scrolled;
+    
+    /* ── Radio stream tuner bar (hidden until radio source selected) ── */
+    ui->radio_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_start(ui->radio_bar, 6);
+    gtk_widget_set_margin_end(ui->radio_bar, 6);
+    gtk_widget_set_margin_top(ui->radio_bar, 4);
+    gtk_widget_set_margin_bottom(ui->radio_bar, 4);
+    gtk_widget_set_visible(ui->radio_bar, FALSE);
+    
+    GtkWidget *dir_label = gtk_label_new("Directory:");
+    gtk_box_append(GTK_BOX(ui->radio_bar), dir_label);
+    
+    /* Directory dropdown: Shoutcast / Icecast / iHeartRadio */
+    const char * const dir_items[] = { "Shoutcast", "Icecast", "iHeartRadio", NULL };
+    ui->radio_dir_dropdown = gtk_drop_down_new_from_strings(dir_items);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(ui->radio_dir_dropdown), 0);
+    g_signal_connect(ui->radio_dir_dropdown, "notify::selected", G_CALLBACK(on_radio_dir_changed), ui);
+    gtk_box_append(GTK_BOX(ui->radio_bar), ui->radio_dir_dropdown);
+    
+    /* Secondary dropdown (genre / market) – hidden until Shoutcast or iHeartRadio selected */
+    ui->radio_sub_dropdown = gtk_drop_down_new_from_strings((const char * const[]){ NULL });
+    gtk_widget_set_visible(ui->radio_sub_dropdown, FALSE);
+    g_signal_connect(ui->radio_sub_dropdown, "notify::selected", G_CALLBACK(on_radio_sub_changed), ui);
+    gtk_box_append(GTK_BOX(ui->radio_bar), ui->radio_sub_dropdown);
+    
+    /* Wrap scrolled window + radio bar into a VBox */
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_box_append(GTK_BOX(vbox), ui->radio_bar);
+    gtk_box_append(GTK_BOX(vbox), scrolled);
+    gtk_widget_set_vexpand(scrolled, TRUE);
+    
+    return vbox;
 }
 
 
@@ -886,6 +927,11 @@ static void on_source_selected(GtkSelectionModel *selection, guint position, gui
         
         /* Clear current track list - GTK4: use g_list_store_remove_all */
         g_list_store_remove_all(ui->track_store);
+        
+        /* Hide radio bar for all non-radio sources */
+        if (source->type != SOURCE_TYPE_RADIO) {
+            gtk_widget_set_visible(ui->radio_bar, FALSE);
+        }
         
         switch (source->type) {
             case SOURCE_TYPE_LIBRARY:
@@ -1236,53 +1282,238 @@ static void ui_update_track_list_with_tracks(MediaPlayerUI *ui, GList *tracks) {
 void ui_show_radio_stations(MediaPlayerUI *ui) {
     if (!ui || !ui->track_store) return;
     
+    /* Show the radio directory bar */
+    gtk_widget_set_visible(ui->radio_bar, TRUE);
+    
     /* Block selection signal while updating */
     if (ui->track_selection && ui->track_selection_handler_id > 0) {
         g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
     }
     
-    /* GTK4: Use g_list_store_remove_all instead of gtk_list_store_clear */
     g_list_store_remove_all(ui->track_store);
     
-    GList *stations = radio_station_get_all(ui->database);
-    if (!stations) {
-        /* Add default stations if none exist */
-        stations = radio_station_get_defaults();
-        for (GList *l = stations; l != NULL; l = l->next) {
-            RadioStation *station = (RadioStation *)l->data;
-            radio_station_save(station, ui->database);
-        }
-    }
-    
-    gint station_num = 1;
-    for (GList *l = stations; l != NULL; l = l->next) {
-        RadioStation *station = (RadioStation *)l->data;
-        
-        gchar *bitrate_str = g_strdup_printf("%d kbps", station->bitrate);
-        
-        /* GTK4: Create a ShriekTrackObject for radio station */
-        ShriekTrackObject *track_obj = shriek_track_object_new(
-            station->id,
-            station_num++,
-            station->name,
-            station->genre ? station->genre : "Unknown",
-            bitrate_str,
-            "",  /* No duration for radio */
-            0,
-            station->url,
-            0   /* No play count for radio */
-        );
-        g_list_store_append(ui->track_store, track_obj);
-        g_object_unref(track_obj);
-        
-        g_free(bitrate_str);
-    }
-    
-    g_list_free_full(stations, (GDestroyNotify)radio_station_free);
+    /* Trigger async fetch for the currently selected directory */
+    on_radio_dir_changed(G_OBJECT(ui->radio_dir_dropdown), NULL, ui);
     
     /* Unblock selection signal */
     if (ui->track_selection && ui->track_selection_handler_id > 0) {
         g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+    }
+}
+
+/* ─── Stream tuner async result callbacks ─── */
+
+static void on_shoutcast_results(GList *entries, gpointer user_data) {
+    MediaPlayerUI *ui = user_data;
+    if (!ui || !ui->track_store) return;
+    
+    if (ui->track_selection && ui->track_selection_handler_id > 0)
+        g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
+    
+    g_list_store_remove_all(ui->track_store);
+    
+    gint num = 1;
+    for (GList *l = entries; l; l = l->next) {
+        ShoutcastEntry *e = l->data;
+        gchar *play_url = shoutcast_get_play_url(e->station_id);
+        gchar *info = g_strdup_printf("%d kbps  %s  [%d listeners]",
+                                      e->bitrate, e->is_aac ? "AAC" : "MP3", e->listeners);
+        
+        /* Use negative IDs to signal "directory station, not from DB" */
+        ShriekTrackObject *obj = shriek_track_object_new(
+            -(e->station_id),      /* negative → directory entry */
+            num++,
+            e->title,
+            e->genre ? e->genre : "",
+            info,
+            "",
+            0,
+            play_url,
+            e->listeners
+        );
+        g_list_store_append(ui->track_store, obj);
+        g_object_unref(obj);
+        g_free(play_url);
+        g_free(info);
+    }
+    g_list_free_full(entries, (GDestroyNotify)shoutcast_entry_free);
+    
+    if (ui->track_selection && ui->track_selection_handler_id > 0)
+        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+}
+
+static void on_icecast_results(GList *entries, gpointer user_data) {
+    MediaPlayerUI *ui = user_data;
+    if (!ui || !ui->track_store) return;
+    
+    if (ui->track_selection && ui->track_selection_handler_id > 0)
+        g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
+    
+    g_list_store_remove_all(ui->track_store);
+    
+    gint num = 1;
+    for (GList *l = entries; l; l = l->next) {
+        IcecastEntry *e = l->data;
+        gchar *info = g_strdup_printf("%d kbps  %s", e->bitrate, e->type_str ? e->type_str : "");
+        
+        ShriekTrackObject *obj = shriek_track_object_new(
+            -1,                    /* no meaningful station ID for icecast */
+            num++,
+            e->title ? e->title : "Untitled",
+            e->genre ? e->genre : "",
+            info,
+            e->current_song ? e->current_song : "",
+            0,
+            e->stream_uri ? e->stream_uri : "",
+            0
+        );
+        g_list_store_append(ui->track_store, obj);
+        g_object_unref(obj);
+        g_free(info);
+    }
+    g_list_free_full(entries, (GDestroyNotify)icecast_entry_free);
+    
+    if (ui->track_selection && ui->track_selection_handler_id > 0)
+        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+}
+
+static void on_ihr_market_results(GList *markets, gpointer user_data) {
+    MediaPlayerUI *ui = user_data;
+    if (!ui) return;
+    
+    /* Cache the market list */
+    if (ui->ihr_cached_markets) {
+        g_list_free_full(ui->ihr_cached_markets, (GDestroyNotify)ihr_market_free);
+    }
+    ui->ihr_cached_markets = markets;  /* take ownership */
+    
+    /* Build string array for dropdown */
+    guint len = g_list_length(markets);
+    const char **items = g_new0(const char *, len + 1);
+    gint i = 0;
+    for (GList *l = markets; l; l = l->next, i++) {
+        IHRMarket *m = l->data;
+        /* Build label: "City, ST, CC (N)" – reuse the entry's city pointer temporarily */
+        items[i] = g_strdup_printf("%s, %s, %s (%d)", m->city, m->state, m->country_code, m->station_count);
+    }
+    items[len] = NULL;
+    
+    /* Replace the sub-dropdown model */
+    GtkStringList *model = gtk_string_list_new(items);
+    gtk_drop_down_set_model(GTK_DROP_DOWN(ui->radio_sub_dropdown), G_LIST_MODEL(model));
+    g_object_unref(model);
+    gtk_widget_set_visible(ui->radio_sub_dropdown, TRUE);
+    
+    for (guint j = 0; j < len; j++) g_free((gchar *)items[j]);
+    g_free(items);
+}
+
+static void on_ihr_station_results(GList *stations, gpointer user_data) {
+    MediaPlayerUI *ui = user_data;
+    if (!ui || !ui->track_store) return;
+    
+    if (ui->track_selection && ui->track_selection_handler_id > 0)
+        g_signal_handler_block(ui->track_selection, ui->track_selection_handler_id);
+    
+    g_list_store_remove_all(ui->track_store);
+    
+    gint num = 1;
+    for (GList *l = stations; l; l = l->next) {
+        IHRStation *s = l->data;
+        
+        ShriekTrackObject *obj = shriek_track_object_new(
+            -1,
+            num++,
+            s->title ? s->title : "Untitled",
+            s->call_letters ? s->call_letters : "",
+            s->description ? s->description : "",
+            "",
+            0,
+            s->stream_uri ? s->stream_uri : "",
+            0
+        );
+        g_list_store_append(ui->track_store, obj);
+        g_object_unref(obj);
+    }
+    g_list_free_full(stations, (GDestroyNotify)ihr_station_free);
+    
+    if (ui->track_selection && ui->track_selection_handler_id > 0)
+        g_signal_handler_unblock(ui->track_selection, ui->track_selection_handler_id);
+}
+
+/* ─── Dropdown change handlers ─── */
+
+static void on_radio_dir_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data) {
+    (void)pspec;
+    MediaPlayerUI *ui = user_data;
+    guint sel = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+    
+    /* Clear track list while loading */
+    g_list_store_remove_all(ui->track_store);
+    
+    switch (sel) {
+    case 0: { /* Shoutcast */
+        ui->radio_current_dir = STREAM_TUNER_SHOUTCAST;
+        
+        /* Populate genre dropdown */
+        gint genre_count = 0;
+        const gchar * const *genres = shoutcast_get_genres(&genre_count);
+        GtkStringList *model = gtk_string_list_new(genres);
+        gtk_drop_down_set_model(GTK_DROP_DOWN(ui->radio_sub_dropdown), G_LIST_MODEL(model));
+        g_object_unref(model);
+        gtk_widget_set_visible(ui->radio_sub_dropdown, TRUE);
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(ui->radio_sub_dropdown), 0);
+        
+        /* Fetch Top 500 */
+        shoutcast_fetch_stations(NULL, on_shoutcast_results, ui);
+        break;
+    }
+        
+    case 1: /* Icecast */
+        gtk_widget_set_visible(ui->radio_sub_dropdown, FALSE);
+        ui->radio_current_dir = STREAM_TUNER_ICECAST;
+        icecast_fetch_stations(on_icecast_results, ui);
+        break;
+        
+    case 2: /* iHeartRadio */
+        ui->radio_current_dir = STREAM_TUNER_IHEART;
+        
+        if (!ui->ihr_cached_markets) {
+            /* Fetch markets first */
+            ihr_fetch_markets(on_ihr_market_results, ui);
+        } else {
+            /* Markets already cached, just show the dropdown */
+            gtk_widget_set_visible(ui->radio_sub_dropdown, TRUE);
+        }
+        break;
+        
+    default:
+        break;
+    }
+}
+
+static void on_radio_sub_changed(GObject *dropdown, GParamSpec *pspec, gpointer user_data) {
+    (void)pspec;
+    MediaPlayerUI *ui = user_data;
+    guint dir = gtk_drop_down_get_selected(GTK_DROP_DOWN(ui->radio_dir_dropdown));
+    guint sub = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+    
+    if (sub == GTK_INVALID_LIST_POSITION) return;
+    
+    if (dir == 0) {
+        /* Shoutcast – sub is genre index */
+        gint genre_count = 0;
+        const gchar * const *genres = shoutcast_get_genres(&genre_count);
+        if ((gint)sub < genre_count) {
+            shoutcast_fetch_stations(genres[sub], on_shoutcast_results, ui);
+        }
+    } else if (dir == 2) {
+        /* iHeartRadio – sub is market index */
+        GList *nth = g_list_nth(ui->ihr_cached_markets, sub);
+        if (nth) {
+            IHRMarket *m = nth->data;
+            ihr_fetch_stations(m->market_id, on_ihr_station_results, ui);
+        }
     }
 }
 
@@ -1313,30 +1544,67 @@ static void ui_play_selected_track(MediaPlayerUI *ui) {
     Source *active_source = source_manager_get_active(ui->source_manager);
     if (active_source && active_source->type == SOURCE_TYPE_RADIO) {
         /* It's a radio station */
-        RadioStation *station = radio_station_load(track_id, ui->database);
-        if (station && station->url) {
-            player_set_uri(ui->player, station->url);
-            player_play(ui->player);
+        if (track_id > 0) {
+            /* Saved station from the database */
+            RadioStation *station = radio_station_load(track_id, ui->database);
+            if (station && station->url) {
+                player_set_uri(ui->player, station->url);
+                player_play(ui->player);
+                
+                gchar *label = g_strdup_printf("%s - %s", station->name ? station->name : "Radio",
+                                               station->genre ? station->genre : "Streaming");
+                gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
+                g_free(label);
+                
+                ui_update_cover_art(ui, NULL, NULL, NULL);
+                radio_station_free(station);
+            }
+        } else {
+            /* Directory station – resolve playlist URLs to direct streams */
+            const gchar *raw_uri = shriek_track_object_get_file_path(track_obj);
+            const gchar *title = shriek_track_object_get_title(track_obj);
+            const gchar *artist = shriek_track_object_get_artist(track_obj);
             
-            gchar *label = g_strdup_printf("%s - %s", station->name ? station->name : "Radio",
-                                           station->genre ? station->genre : "Streaming");
-            gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
-            g_free(label);
-            
-            /* Update cover art for radio (typically no cover) */
-            ui_update_cover_art(ui, NULL, NULL, NULL);
-            
-            radio_station_free(station);
+            if (raw_uri && *raw_uri) {
+                gchar *uri = radio_resolve_stream_url(raw_uri);
+                player_set_uri(ui->player, uri);
+                g_free(uri);
+                player_play(ui->player);
+                
+                gchar *label = g_strdup_printf("%s - %s",
+                                               title ? title : "Radio",
+                                               artist ? artist : "Streaming");
+                gtk_label_set_text(GTK_LABEL(ui->now_playing_label), label);
+                g_free(label);
+                
+                ui_update_cover_art(ui, NULL, NULL, NULL);
+            }
         }
     } else {
         /* It's a music track */
         Track *track = database_get_track(ui->database, track_id);
         if (track && track->file_path) {
-            /* Store current playlist for prev/next navigation */
-            if (ui->current_playlist) {
-                g_list_free_full(ui->current_playlist, (GDestroyNotify)database_free_track);
+            /* Rebuild the current playlist only if it doesn't already match
+             * the current source view. This avoids an expensive full-table
+             * reload from the database on every single track play. */
+            Source *active_source = source_manager_get_active(ui->source_manager);
+            gboolean need_rebuild = (ui->current_playlist == NULL);
+            
+            if (!need_rebuild && active_source) {
+                /* If the source changed type since last build, rebuild */
+                static SourceType last_source_type = -1;
+                if (active_source->type != last_source_type) {
+                    need_rebuild = TRUE;
+                    last_source_type = active_source->type;
+                }
             }
-            ui->current_playlist = database_get_all_tracks(ui->database);
+            
+            if (need_rebuild) {
+                if (ui->current_playlist) {
+                    g_list_free_full(ui->current_playlist, (GDestroyNotify)database_free_track);
+                }
+                ui->current_playlist = database_get_all_tracks(ui->database);
+            }
             
             /* Find the index of this track in the playlist */
             ui->current_track_index = 0;
@@ -1596,6 +1864,11 @@ void ui_free(MediaPlayerUI *ui) {
     if (ui->artist_browser) browser_view_free(ui->artist_browser);
     if (ui->album_browser) browser_view_free(ui->album_browser);
     if (ui->genre_browser) browser_view_free(ui->genre_browser);
+    
+    /* Free cached iHeartRadio markets */
+    if (ui->ihr_cached_markets) {
+        g_list_free_full(ui->ihr_cached_markets, (GDestroyNotify)ihr_market_free);
+    }
     
     g_free(ui);
 }
